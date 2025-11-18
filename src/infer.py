@@ -1,4 +1,5 @@
 import argparse
+import importlib
 from pathlib import Path
 from typing import List
 
@@ -8,17 +9,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from augmentations import get_valid_augmentations
-from models.cmseg_lite import CMSegLite
-from models.convnext_unetpp import ConvNeXt_UNetPP
-from models.swin_deeplab import SwinDeepLabV3Plus
 from utils.postprocess import postprocess_mask
 from utils.rle import rle_encode
-
-MODEL_FACTORY = {
-    "convnext_unetpp": ConvNeXt_UNetPP,
-    "swin_deeplab": SwinDeepLabV3Plus,
-    "cmseg_lite": CMSegLite,
-}
 
 
 class InferenceDataset(Dataset):
@@ -41,10 +33,11 @@ class InferenceDataset(Dataset):
         return tensor, path.stem, (h, w)
 
 
-def build_model(name: str, params: dict) -> torch.nn.Module:
-    if name not in MODEL_FACTORY:
-        raise ValueError(f"Unknown model {name}")
-    return MODEL_FACTORY[name](**params)
+def build_model(target: str, params: dict) -> torch.nn.Module:
+    module_name, class_name = target.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    cls = getattr(module, class_name)
+    return cls(**params)
 
 
 def parse_args():
@@ -68,18 +61,20 @@ def main() -> None:
 
     checkpoint = torch.load(args.checkpoint, map_location=device)
     cfg = checkpoint.get("config", {})
-    model_name = args.model_name or cfg.get("model", {}).get("name", "convnext_unetpp")
+    model_target = args.model_name or cfg.get("model", {}).get("target")
+    if not model_target:
+        raise ValueError("model target missing in checkpoint; please provide --model-name")
     image_size = tuple(args.image_size or cfg.get("data", {}).get("image_size", [512, 512]))
     model_params = cfg.get("model", {}).get("params", {})
     model_params.setdefault("num_classes", 1)
-    model = build_model(model_name, model_params)
+    model = build_model(model_target, model_params)
     model.load_state_dict(checkpoint["model"], strict=False)
     model = model.to(device)
     model.eval()
 
     image_dir = Path(args.image_dir)
-    image_paths = sorted(image_dir.glob("*.png")) + sorted(image_dir.glob("*.jpg"))
-    augment = get_valid_augmentations(image_size)
+    image_paths = sorted([p for ext in ("*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff") for p in image_dir.glob(ext)])
+    augment = get_valid_augmentations(image_size, cfg.get("augmentations", {}).get("val"))
     dataset = InferenceDataset(image_paths, augment)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 

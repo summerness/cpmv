@@ -1,5 +1,5 @@
 import random
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import albumentations as A
 import cv2
@@ -7,55 +7,87 @@ import numpy as np
 from albumentations.pytorch import ToTensorV2
 
 
-def get_train_augmentations(
-    image_size: Tuple[int, int],
-    use_elastic: bool = False,
-    use_grid_distortion: bool = False,
-    use_synthetic: bool = False,
-) -> A.Compose:
+def _add_flip(transforms, prob: float, vertical: bool = False) -> None:
+    if prob and prob > 0:
+        aug = A.VerticalFlip if vertical else A.HorizontalFlip
+        transforms.append(aug(p=prob))
+
+
+def get_train_augmentations(image_size: Tuple[int, int], params: Optional[Dict] = None) -> A.Compose:
+    cfg = params or {}
     h, w = image_size
-    transforms = [
-        A.Resize(height=h, width=w),
-        A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
-        A.RandomRotate90(p=0.5),
-        A.ShiftScaleRotate(
-            shift_limit=0.05,
-            scale_limit=0.1,
-            rotate_limit=30,
-            border_mode=cv2.BORDER_REFLECT_101,
-            p=0.5,
-        ),
-        A.RandomBrightnessContrast(
-            brightness_limit=0.2,
-            contrast_limit=0.2,
-            p=0.5,
-        ),
-        A.GaussianBlur(blur_limit=3, p=0.2),
-        A.GaussNoise(var_limit=(5.0, 20.0), p=0.2),
-    ]
+    transforms = [A.Resize(height=h, width=w)]
 
-    if use_elastic:
-        transforms.append(A.ElasticTransform(p=0.2, alpha=80, sigma=12, alpha_affine=10))
-    if use_grid_distortion:
-        transforms.append(A.GridDistortion(p=0.2))
+    _add_flip(transforms, cfg.get("horizontal_flip", 0.5))
+    _add_flip(transforms, cfg.get("vertical_flip", 0.0), vertical=True)
 
+    rotate90_p = cfg.get("random_rotate90", 0.5)
+    if rotate90_p and rotate90_p > 0:
+        transforms.append(A.RandomRotate90(p=rotate90_p))
+
+    ssr_cfg = cfg.get("shift_scale_rotate", {"p": 0.5, "shift_limit": 0.05, "scale_limit": 0.1, "rotate_limit": 30})
+    if ssr_cfg.get("p", 0) > 0:
+        transforms.append(
+            A.ShiftScaleRotate(
+                shift_limit=ssr_cfg.get("shift_limit", 0.05),
+                scale_limit=ssr_cfg.get("scale_limit", 0.1),
+                rotate_limit=ssr_cfg.get("rotate_limit", 30),
+                border_mode=cv2.BORDER_REFLECT_101,
+                p=ssr_cfg.get("p", 0.5),
+            )
+        )
+
+    bc_cfg = cfg.get("brightness_contrast", {"p": 0.5, "brightness_limit": 0.2, "contrast_limit": 0.2})
+    if bc_cfg.get("p", 0) > 0:
+        transforms.append(
+            A.RandomBrightnessContrast(
+                brightness_limit=bc_cfg.get("brightness_limit", 0.2),
+                contrast_limit=bc_cfg.get("contrast_limit", 0.2),
+                p=bc_cfg.get("p", 0.5),
+            )
+        )
+
+    blur_cfg = cfg.get("gaussian_blur", {"p": 0.0})
+    if blur_cfg.get("p", 0) > 0:
+        transforms.append(A.GaussianBlur(blur_limit=blur_cfg.get("blur_limit", 3), p=blur_cfg["p"]))
+
+    noise_cfg = cfg.get("gauss_noise", {"p": 0.0})
+    if noise_cfg.get("p", 0) > 0:
+        transforms.append(A.GaussNoise(var_limit=tuple(noise_cfg.get("var_limit", (5.0, 20.0))), p=noise_cfg["p"]))
+
+    elastic_cfg = cfg.get("elastic", {})
+    if elastic_cfg.get("enabled", False):
+        transforms.append(
+            A.ElasticTransform(
+                p=elastic_cfg.get("p", 0.2),
+                alpha=elastic_cfg.get("alpha", 80),
+                sigma=elastic_cfg.get("sigma", 12),
+                alpha_affine=elastic_cfg.get("alpha_affine", 10),
+            )
+        )
+
+    grid_cfg = cfg.get("grid_distortion", {})
+    if grid_cfg.get("enabled", False):
+        transforms.append(A.GridDistortion(p=grid_cfg.get("p", 0.2)))
+
+    normalize_cfg = cfg.get("normalize", {"mean": (0.5, 0.5, 0.5), "std": (0.5, 0.5, 0.5)})
     transforms.extend(
         [
-            A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+            A.Normalize(mean=tuple(normalize_cfg.get("mean", (0.5, 0.5, 0.5))), std=tuple(normalize_cfg.get("std", (0.5, 0.5, 0.5)))),
             ToTensorV2(),
         ]
     )
-
     return A.Compose(transforms, additional_targets={"mask": "mask"})
 
 
-def get_valid_augmentations(image_size: Tuple[int, int]) -> A.Compose:
+def get_valid_augmentations(image_size: Tuple[int, int], params: Optional[Dict] = None) -> A.Compose:
+    cfg = params or {}
     h, w = image_size
+    normalize_cfg = cfg.get("normalize", {"mean": (0.5, 0.5, 0.5), "std": (0.5, 0.5, 0.5)})
     return A.Compose(
         [
             A.Resize(height=h, width=w),
-            A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+            A.Normalize(mean=tuple(normalize_cfg.get("mean", (0.5, 0.5, 0.5))), std=tuple(normalize_cfg.get("std", (0.5, 0.5, 0.5)))),
             ToTensorV2(),
         ],
         additional_targets={"mask": "mask"},

@@ -1,0 +1,53 @@
+seed: 2025
+
+data:
+  train_csv: data/train.csv
+  image_col: image_path
+  mask_col: mask_path
+  category_col: category
+  image_size: [768, 768]
+  num_workers: 4
+  val_split: 0.2
+  use_synthetic: true
+  synthetic_prob: 0.2
+
+model:
+  target: models.convnext_unetpp_768.ConvNeXtUNetPP768
+  params:
+    in_channels: 3
+    num_classes: 1
+
+augmentations:
+  train:
+    horizontal_flip: 0.5
+    vertical_flip: 0.25
+    random_rotate90: 0.3
+    shift_scale_rotate:
+      p: 0.4
+      shift_limit: 0.04
+      scale_limit: 0.08
+      rotate_limit: 20
+    brightness_contrast:
+      p: 0.4
+      brightness_limit: 0.15
+      contrast_limit: 0.15
+    gaussian_blur:
+      p: 0.1
+      blur_limit: 3
+    gauss_noise:
+      p: 0.1
+      var_limit: [5.0, 15.0]
+  val: {}
+
+train:
+  epochs: 20
+  batch_size: 4
+  val_batch_size: 2
+  lr: 0.0001
+  weight_decay: 0.0001
+  min_lr: 1.0e-6
+  output_dir: outputs/m4_convnext_unetpp_768
+  use_amp: true
+  cls_weight: 0.3
+  scheduler:
+    name: cosine

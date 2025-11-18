@@ -1,0 +1,112 @@
+from typing import Sequence
+
+import timm
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class ASPP(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int = 256, atrous_rates: Sequence[int] = (1, 6, 12, 18)) -> None:
+        super().__init__()
+        modules = []
+        modules.append(
+            nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+            )
+        )
+        for rate in atrous_rates[1:]:
+            modules.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels,
+                        out_channels,
+                        kernel_size=3,
+                        padding=rate,
+                        dilation=rate,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(out_channels),
+                    nn.ReLU(inplace=True),
+                )
+            )
+        modules.append(
+            nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+            )
+        )
+        self.convs = nn.ModuleList(modules)
+        self.project = nn.Sequential(
+            nn.Conv2d(out_channels * len(modules), out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        res = []
+        for idx, conv in enumerate(self.convs):
+            feat = conv(x)
+            if idx == len(self.convs) - 1:
+                feat = F.interpolate(feat, size=x.shape[-2:], mode="bilinear", align_corners=False)
+            res.append(feat)
+        x = torch.cat(res, dim=1)
+        return self.project(x)
+
+
+class SwinDeepLab512(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 3,
+        num_classes: int = 1,
+        backbone: str = "swin_tiny_patch4_window7_224",
+        low_level_idx: int = 0,
+    ) -> None:
+        super().__init__()
+        self.encoder = timm.create_model(
+            backbone,
+            pretrained=True,
+            in_chans=in_channels,
+            features_only=True,
+            out_indices=(0, 1, 2, 3),
+        )
+        channels = self.encoder.feature_info.channels()
+        self.aspp = ASPP(channels[-1], out_channels=256)
+        self.low_proj = nn.Sequential(
+            nn.Conv2d(channels[low_level_idx], 64, kernel_size=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.decoder = nn.Sequential(
+            nn.Conv2d(256 + 64, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+        )
+        self.mask_head = nn.Conv2d(256, num_classes, kernel_size=1)
+        self.cls_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(256, 1),
+        )
+        self.low_level_idx = low_level_idx
+
+    def forward(self, x: torch.Tensor):
+        features = self.encoder(x)
+        high = features[-1]
+        low = features[self.low_level_idx]
+
+        aspp_out = self.aspp(high)
+        cls_logit = self.cls_head(aspp_out).squeeze(-1)
+        upsampled = F.interpolate(aspp_out, size=low.shape[-2:], mode="bilinear", align_corners=False)
+        low_feat = self.low_proj(low)
+        decoder_out = self.decoder(torch.cat([upsampled, low_feat], dim=1))
+        mask_logits = self.mask_head(decoder_out)
+        mask_logits = F.interpolate(mask_logits, size=x.shape[-2:], mode="bilinear", align_corners=False)
+        return mask_logits, cls_logit

@@ -1,27 +1,17 @@
 import argparse
-import os
+import importlib
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import yaml
 from torch.utils.data import DataLoader
 
-from dataset import CopyMoveDataset
 from augmentations import get_train_augmentations, get_valid_augmentations
-from models.cmseg_lite import CMSegLite
-from models.convnext_unetpp import ConvNeXt_UNetPP
-from models.swin_deeplab import SwinDeepLabV3Plus
+from dataset import CopyMoveDataset
 from utils.losses import multitask_loss
 from utils.metrics import compute_f1
-
-MODEL_FACTORY = {
-    "convnext_unetpp": ConvNeXt_UNetPP,
-    "swin_deeplab": SwinDeepLabV3Plus,
-    "cmseg_lite": CMSegLite,
-}
 
 
 def seed_everything(seed: int = 42) -> None:
@@ -61,12 +51,40 @@ def load_paths(
 
 
 def build_model(cfg: Dict) -> torch.nn.Module:
-    name = cfg["model"]["name"].lower()
-    params = cfg["model"].get("params", {})
-    if name not in MODEL_FACTORY:
-        raise ValueError(f"Unknown model: {name}")
-    model = MODEL_FACTORY[name](**params)
+    model_cfg = cfg.get("model", {})
+    target = model_cfg.get("target")
+    if not target:
+        raise ValueError("model.target must be provided in config")
+    params = model_cfg.get("params", {})
+    module_name, class_name = target.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    cls = getattr(module, class_name)
+    model = cls(**params)
     return model
+
+
+def split_train_val(df: pd.DataFrame, data_cfg: Dict, seed: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    fold_col = data_cfg.get("fold_col")
+    fold_id = data_cfg.get("fold_id")
+    if fold_col and fold_col in df.columns and fold_id is not None:
+        val_df = df[df[fold_col] == fold_id]
+        train_df = df[df[fold_col] != fold_id]
+        if val_df.empty:
+            raise ValueError(f"No validation samples found for fold {fold_id}")
+        return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
+
+    val_csv = data_cfg.get("val_csv")
+    if val_csv:
+        val_df = pd.read_csv(val_csv)
+        train_df = df
+        return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
+
+    val_frac = data_cfg.get("val_split", 0.1)
+    if val_frac <= 0 or val_frac >= 1:
+        raise ValueError("val_split must be between 0 and 1 when no fold/val_csv is provided")
+    val_df = df.sample(frac=val_frac, random_state=seed)
+    train_df = df.drop(val_df.index)
+    return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
 
 
 def main() -> None:
@@ -81,22 +99,13 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    train_df = pd.read_csv(cfg["data"]["train_csv"])
-    val_csv = cfg["data"].get("val_csv")
-    if val_csv:
-        val_df = pd.read_csv(val_csv)
-    else:
-        val_frac = cfg["data"].get("val_split", 0.1)
-        val_df = train_df.sample(frac=val_frac, random_state=cfg.get("seed", 42))
-        train_df = train_df.drop(val_df.index)
+    full_df = pd.read_csv(cfg["data"]["train_csv"])
+    train_df, val_df = split_train_val(full_df, cfg["data"], cfg.get("seed", 42))
 
     image_size = tuple(cfg["data"].get("image_size", [512, 512]))
-    train_aug = get_train_augmentations(
-        image_size,
-        use_elastic=cfg["data"].get("use_elastic", False),
-        use_grid_distortion=cfg["data"].get("use_grid_distortion", False),
-    )
-    val_aug = get_valid_augmentations(image_size)
+    aug_cfg = cfg.get("augmentations", {})
+    train_aug = get_train_augmentations(image_size, aug_cfg.get("train"))
+    val_aug = get_valid_augmentations(image_size, aug_cfg.get("val"))
 
     category_col = cfg["data"].get("category_col", "category")
     train_imgs, train_masks, train_categories = load_paths(
@@ -120,7 +129,13 @@ def main() -> None:
         use_synthetic=cfg["data"].get("use_synthetic", False),
         synthetic_prob=cfg["data"].get("synthetic_prob", 0.25),
     )
-    val_dataset = CopyMoveDataset(val_imgs, val_masks, categories=val_categories, augment=val_aug, use_synthetic=False)
+    val_dataset = CopyMoveDataset(
+        val_imgs,
+        val_masks,
+        categories=val_categories,
+        augment=val_aug,
+        use_synthetic=False,
+    )
 
     train_loader = DataLoader(
         train_dataset,
@@ -144,11 +159,27 @@ def main() -> None:
         model = torch.nn.DataParallel(model)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["train"].get("lr", 1e-4), weight_decay=cfg["train"].get("weight_decay", 1e-4))
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=cfg["train"].get("epochs", 10),
-        eta_min=cfg["train"].get("min_lr", 1e-6),
-    )
+    scheduler_cfg = cfg["train"].get("scheduler", {"name": "cosine"})
+    scheduler_name = scheduler_cfg.get("name", "cosine").lower()
+    epochs = cfg["train"].get("epochs", 10)
+    if scheduler_name == "onecycle":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=cfg["train"].get("lr", 1e-4),
+            epochs=epochs,
+            steps_per_epoch=max(len(train_loader), 1),
+            pct_start=scheduler_cfg.get("pct_start", 0.3),
+            div_factor=scheduler_cfg.get("div_factor", 25.0),
+            final_div_factor=scheduler_cfg.get("final_div_factor", 1e4),
+        )
+        step_per_batch = True
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=epochs,
+            eta_min=cfg["train"].get("min_lr", 1e-6),
+        )
+        step_per_batch = False
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"].get("use_amp", True) and device.type == "cuda")
 
@@ -156,7 +187,7 @@ def main() -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
     best_f1 = 0.0
 
-    for epoch in range(cfg["train"].get("epochs", 10)):
+    for epoch in range(epochs):
         model.train()
         running_loss = 0.0
         for batch in train_loader:
@@ -177,10 +208,13 @@ def main() -> None:
             scaler.scale(total_loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            if step_per_batch:
+                scheduler.step()
 
             running_loss += total_loss.item()
 
-        scheduler.step()
+        if not step_per_batch:
+            scheduler.step()
 
         val_loss = 0.0
         val_f1 = 0.0

@@ -1,6 +1,7 @@
 import argparse
+import importlib
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List
 
 import cv2
 import numpy as np
@@ -8,24 +9,15 @@ import pandas as pd
 import torch
 
 from augmentations import get_valid_augmentations
-from models.cmseg_lite import CMSegLite
-from models.convnext_unetpp import ConvNeXt_UNetPP
-from models.swin_deeplab import SwinDeepLabV3Plus
 from utils.postprocess import postprocess_mask
 from utils.rle import rle_encode
-
-MODEL_FACTORY = {
-    "convnext_unetpp": ConvNeXt_UNetPP,
-    "swin_deeplab": SwinDeepLabV3Plus,
-    "cmseg_lite": CMSegLite,
-}
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run 5-model ensemble inference.")
     parser.add_argument("--image-dir", type=str, required=True)
     parser.add_argument("--checkpoints", nargs="+", required=True, help="List of checkpoint paths (expected 5).")
-    parser.add_argument("--model-names", nargs="*", default=None, help="Optional override model names matching checkpoints.")
+    parser.add_argument("--model-names", nargs="*", default=None, help="Optional override fully-qualified model targets matching checkpoints.")
     parser.add_argument("--weights", nargs="*", type=float, default=None, help="Optional weights for checkpoints.")
     parser.add_argument("--output", type=str, default="ensemble.csv")
     parser.add_argument("--threshold", type=float, default=0.5)
@@ -35,26 +27,28 @@ def parse_args():
     return parser.parse_args()
 
 
-def build_model(model_name: str, params: dict) -> torch.nn.Module:
-    if model_name not in MODEL_FACTORY:
-        raise ValueError(f"Unknown model {model_name}")
-    return MODEL_FACTORY[model_name](**params)
+def build_model(target: str, params: dict) -> torch.nn.Module:
+    module_name, class_name = target.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    cls = getattr(module, class_name)
+    return cls(**params)
 
 
-def load_checkpoint(path: Path, device: torch.device, override_name: str = None) -> Tuple[torch.nn.Module, Tuple[int, int], str]:
+def load_checkpoint(path: Path, device: torch.device, override_target: str = None):
     ckpt = torch.load(path, map_location=device)
     cfg = ckpt.get("config", {})
-    model_name = override_name or cfg.get("model", {}).get("name")
-    if model_name is None:
-        raise ValueError(f"Checkpoint {path} missing model name in config; please provide --model-names override.")
+    model_target = override_target or cfg.get("model", {}).get("target")
+    if model_target is None:
+        raise ValueError(f"Checkpoint {path} missing model target in config; please provide --model-names override.")
     params = cfg.get("model", {}).get("params", {})
     params.setdefault("num_classes", 1)
-    model = build_model(model_name.lower(), params)
+    model = build_model(model_target, params)
     model.load_state_dict(ckpt["model"], strict=False)
     model = model.to(device)
     model.eval()
     image_size = tuple(cfg.get("data", {}).get("image_size", [512, 512]))
-    return model, image_size, model_name
+    val_aug = cfg.get("augmentations", {}).get("val")
+    return model, image_size, val_aug
 
 
 def main() -> None:
@@ -75,9 +69,10 @@ def main() -> None:
     models: List[torch.nn.Module] = []
     transforms = []
     for idx, ckpt_path in enumerate(args.checkpoints):
-        model, image_size, resolved_name = load_checkpoint(Path(ckpt_path), device, override_name=(args.model_names[idx] if args.model_names else None))
+        target_override = args.model_names[idx] if args.model_names else None
+        model, image_size, val_aug = load_checkpoint(Path(ckpt_path), device, override_target=target_override)
         models.append(model)
-        transforms.append(get_valid_augmentations(image_size))
+        transforms.append(get_valid_augmentations(image_size, val_aug))
 
     image_dir = Path(args.image_dir)
     image_paths = sorted([p for ext in ("*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff") for p in image_dir.glob(ext)])
