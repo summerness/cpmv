@@ -1,0 +1,33 @@
+seed: 512
+
+data:
+  train_csv: data/train.csv
+  val_csv: data/val.csv
+  image_col: image_path
+  mask_col: mask_path
+  image_size: [512, 512]
+  num_workers: 6
+  use_synthetic: true
+  synthetic_prob: 0.6
+  use_elastic: true
+  use_grid_distortion: true
+
+model:
+  name: cmseg_lite
+  params:
+    in_channels: 3
+    num_classes: 1
+    backbone: resnet18
+    pretrained: true
+    multi_scale_corr: true
+
+train:
+  epochs: 28
+  batch_size: 5
+  val_batch_size: 3
+  lr: 0.00012
+  weight_decay: 0.00005
+  min_lr: 1.0e-06
+  output_dir: outputs/cmseg_lite_512_synCM
+  use_amp: true
+  cls_weight: 0.3

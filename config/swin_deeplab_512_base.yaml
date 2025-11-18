@@ -1,0 +1,33 @@
+seed: 1337
+
+data:
+  train_csv: data/train.csv
+  val_csv: data/val.csv
+  image_col: image_path
+  mask_col: mask_path
+  image_size: [512, 512]
+  num_workers: 8
+  use_synthetic: true
+  synthetic_prob: 0.25
+  use_elastic: false
+  use_grid_distortion: true
+
+model:
+  name: swin_deeplab
+  params:
+    in_channels: 3
+    num_classes: 1
+    backbone: swin_tiny_patch4_window7_224
+    pretrained: true
+    low_level_idx: 0
+
+train:
+  epochs: 25
+  batch_size: 4
+  val_batch_size: 2
+  lr: 5.0e-05
+  weight_decay: 0.0001
+  min_lr: 1.0e-06
+  output_dir: outputs/swin_deeplab_512_base
+  use_amp: true
+  cls_weight: 0.3

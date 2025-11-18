@@ -1,0 +1,32 @@
+seed: 42
+
+data:
+  train_csv: data/train.csv
+  val_csv: data/val.csv
+  image_col: image_path
+  mask_col: mask_path
+  image_size: [512, 512]
+  num_workers: 6
+  use_synthetic: true
+  synthetic_prob: 0.2
+  use_elastic: false
+  use_grid_distortion: false
+
+model:
+  name: convnext_unetpp
+  params:
+    in_channels: 3
+    num_classes: 1
+    encoder_name: tu-convnext_tiny
+    encoder_weights: imagenet
+
+train:
+  epochs: 30
+  batch_size: 6
+  val_batch_size: 3
+  lr: 0.0001
+  weight_decay: 0.0001
+  min_lr: 1.0e-06
+  output_dir: outputs/convnext_unetpp_512_base
+  use_amp: true
+  cls_weight: 0.3
