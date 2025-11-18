@@ -9,10 +9,10 @@ MASK_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".npy", ".npz")
 
 
 def list_images(directory: Path) -> List[Path]:
-    files = []
+    files: List[Path] = []
     for ext in IMAGE_EXTS:
-        files.extend(directory.glob(f"*{ext}"))
-    return sorted(files)
+        files.extend(directory.rglob(f"*{ext}"))
+    return sorted([p for p in files if p.is_file()])
 
 
 def find_mask(mask_dir: Optional[Path], stem: str) -> Optional[Path]:
@@ -34,15 +34,20 @@ def build_train_df(
     rows = []
     for image_path in list_images(image_dir):
         stem = image_path.stem
-        mask_path = find_mask(mask_dir, stem)
-        if mask_path is None:
-            if allow_missing_mask:
-                continue
-            raise FileNotFoundError(f"Mask for {image_path} not found in {mask_dir}")
+        rel_parts = image_path.relative_to(image_dir).parts
+        category = rel_parts[0] if len(rel_parts) > 1 else "root"
+        mask_path = None
+        if category.lower() != "authentic":
+            mask_path = find_mask(mask_dir, stem)
+            if mask_path is None:
+                if allow_missing_mask:
+                    continue
+                raise FileNotFoundError(f"Mask for {image_path} not found in {mask_dir}")
         rows.append({
             "image_path": str(image_path),
-            "mask_path": str(mask_path),
+            "mask_path": str(mask_path) if mask_path is not None else "",
             "source": source_label,
+            "category": category,
         })
     return pd.DataFrame(rows)
 
@@ -68,8 +73,9 @@ def build_test_csv(image_dir: Path, output: Path, sample_submission: Optional[Pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare CSV metadata from directory structure.")
-    parser.add_argument("--train-images", type=str, required=True)
-    parser.add_argument("--train-masks", type=str, required=True)
+    parser.add_argument("--dataset-root", type=str, default=None, help="Optional base directory (e.g., /kaggle/input/... ).")
+    parser.add_argument("--train-images", type=str, default=None)
+    parser.add_argument("--train-masks", type=str, default=None)
     parser.add_argument("--train-output", type=str, default="data/train.csv")
     parser.add_argument("--supp-images", type=str, default=None)
     parser.add_argument("--supp-masks", type=str, default=None)
@@ -80,20 +86,38 @@ def main() -> None:
     parser.add_argument("--allow-missing-mask", action="store_true")
     args = parser.parse_args()
 
-    train_dir = Path(args.train_images)
-    train_mask_dir = Path(args.train_masks)
+    dataset_root = Path(args.dataset_root) if args.dataset_root else None
+
+    def resolve_path(provided: Optional[str], default_subdir: str, must_exist: bool = True) -> Optional[Path]:
+        if provided:
+            path = Path(provided)
+        elif dataset_root:
+            path = dataset_root / default_subdir
+        else:
+            return None
+        if must_exist and not path.exists():
+            raise FileNotFoundError(f"Expected path {path} does not exist")
+        return path
+
+    train_dir = resolve_path(args.train_images, "train_images")
+    train_mask_dir = resolve_path(args.train_masks, "train_masks")
+    if train_dir is None or train_mask_dir is None:
+        raise ValueError("Please provide --train-images/--train-masks or --dataset-root with train_images/train_masks.")
+
     train_output = Path(args.train_output)
     train_output.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Building train CSV from {train_dir} and {train_mask_dir}")
     train_df = build_train_df(train_dir, train_mask_dir, source_label="primary", allow_missing_mask=args.allow_missing_mask)
 
-    if args.include_supp and args.supp_images and args.supp_masks:
-        supp_dir = Path(args.supp_images)
-        supp_mask_dir = Path(args.supp_masks)
+    supp_images = resolve_path(args.supp_images, "supplemental_images", must_exist=False)
+    supp_masks = resolve_path(args.supp_masks, "supplemental_masks", must_exist=False)
+    if args.include_supp and supp_images and supp_masks:
+        if not supp_images.exists() or not supp_masks.exists():
+            raise FileNotFoundError("Supplemental directories not found.")
         supp_df = build_train_df(
-            supp_dir,
-            supp_mask_dir,
+            supp_images,
+            supp_masks,
             source_label="supplemental",
             allow_missing_mask=args.allow_missing_mask,
         )
@@ -104,11 +128,11 @@ def main() -> None:
     combined.to_csv(train_output, index=False)
     print(f"Saved {len(combined)} rows to {train_output}")
 
-    if args.test_images:
-        test_dir = Path(args.test_images)
+    test_dir = resolve_path(args.test_images, "test_images", must_exist=False)
+    if test_dir and test_dir.exists():
         test_output = Path(args.test_output)
         test_output.parent.mkdir(parents=True, exist_ok=True)
-        sample_sub = Path(args.sample_submission) if args.sample_submission else None
+        sample_sub = resolve_path(args.sample_submission, "sample_submission.csv", must_exist=False)
         build_test_csv(test_dir, test_output, sample_sub)
         print(f"Saved test CSV to {test_output}")
 

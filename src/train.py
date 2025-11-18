@@ -1,7 +1,7 @@
 import argparse
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import pandas as pd
 import torch
@@ -35,10 +35,29 @@ def seed_everything(seed: int = 42) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_paths(df: pd.DataFrame, img_col: str, mask_col: str) -> Tuple[List[str], List[str]]:
+def load_paths(
+    df: pd.DataFrame,
+    img_col: str,
+    mask_col: Optional[str],
+    category_col: Optional[str] = None,
+) -> Tuple[List[str], Optional[List[str]], Optional[List[Optional[str]]]]:
     imgs = df[img_col].tolist()
-    masks = df[mask_col].tolist() if mask_col in df.columns else None
-    return imgs, masks
+    masks = df[mask_col].tolist() if mask_col and mask_col in df.columns else None
+    if masks is not None:
+        processed_masks: List[str] = []
+        for item in masks:
+            if isinstance(item, str):
+                processed_masks.append(item)
+            elif pd.isna(item):
+                processed_masks.append("")
+            else:
+                processed_masks.append(str(item))
+        masks = processed_masks
+    if category_col and category_col in df.columns:
+        categories = df[category_col].tolist()
+    else:
+        categories = [None] * len(imgs)
+    return imgs, masks, categories
 
 
 def build_model(cfg: Dict) -> torch.nn.Module:
@@ -79,17 +98,29 @@ def main() -> None:
     )
     val_aug = get_valid_augmentations(image_size)
 
-    train_imgs, train_masks = load_paths(train_df, cfg["data"]["image_col"], cfg["data"].get("mask_col", "mask_path"))
-    val_imgs, val_masks = load_paths(val_df, cfg["data"]["image_col"], cfg["data"].get("mask_col", "mask_path"))
+    category_col = cfg["data"].get("category_col", "category")
+    train_imgs, train_masks, train_categories = load_paths(
+        train_df,
+        cfg["data"]["image_col"],
+        cfg["data"].get("mask_col", "mask_path"),
+        category_col=category_col,
+    )
+    val_imgs, val_masks, val_categories = load_paths(
+        val_df,
+        cfg["data"]["image_col"],
+        cfg["data"].get("mask_col", "mask_path"),
+        category_col=category_col,
+    )
 
     train_dataset = CopyMoveDataset(
         train_imgs,
         train_masks,
+        categories=train_categories,
         augment=train_aug,
         use_synthetic=cfg["data"].get("use_synthetic", False),
         synthetic_prob=cfg["data"].get("synthetic_prob", 0.25),
     )
-    val_dataset = CopyMoveDataset(val_imgs, val_masks, augment=val_aug, use_synthetic=False)
+    val_dataset = CopyMoveDataset(val_imgs, val_masks, categories=val_categories, augment=val_aug, use_synthetic=False)
 
     train_loader = DataLoader(
         train_dataset,

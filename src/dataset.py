@@ -35,15 +35,19 @@ class CopyMoveDataset(Dataset):
         self,
         image_paths: Sequence[Path],
         mask_paths: Optional[Sequence[Path]] = None,
+        categories: Optional[Sequence[Optional[str]]] = None,
         augment: Optional[Callable] = None,
         use_synthetic: bool = False,
         synthetic_prob: float = 0.25,
     ) -> None:
         if mask_paths is not None and len(image_paths) != len(mask_paths):
             raise ValueError("image_paths and mask_paths must have identical length")
+        if categories is not None and len(categories) != len(image_paths):
+            raise ValueError("categories must have identical length as image_paths")
 
         self.image_paths = [Path(p) for p in image_paths]
-        self.mask_paths = [Path(p) for p in mask_paths] if mask_paths is not None else None
+        self.mask_paths = list(mask_paths) if mask_paths is not None else None
+        self.categories = list(categories) if categories is not None else None
         self.augment = augment
         self.use_synthetic = use_synthetic
         self.synthetic_prob = synthetic_prob
@@ -60,16 +64,18 @@ class CopyMoveDataset(Dataset):
 
         mask = None
         if self.mask_paths is not None:
-            mask_path = self.mask_paths[idx]
-            if mask_path.suffix.lower() in {".npy", ".npz"}:
-                mask = _read_mask(mask_path)
+            mask_entry = self.mask_paths[idx]
+            if mask_entry is None or str(mask_entry).strip() == "":
+                mask = np.zeros(image.shape[:2], dtype=np.uint8)
             else:
+                mask_path = Path(mask_entry)
                 mask = _read_mask(mask_path)
 
-        if self.use_synthetic and mask is not None:
-            forged_ratio = mask.mean() if mask.size else 0.0
-            if forged_ratio < 0.01 and random.random() < self.synthetic_prob:
-                image, mask = synthetic_copy_move(image, mask)
+        if self.use_synthetic:
+            forged_ratio = float(mask.mean()) if mask is not None and mask.size else 0.0
+            apply_prob = self.synthetic_prob
+            if (mask is None or forged_ratio < 0.01) and random.random() < apply_prob:
+                image, mask = synthetic_copy_move(image, mask if mask is not None else np.zeros((image.shape[0], image.shape[1]), dtype=np.float32), p=1.0)
 
         data = {"image": image}
         if mask is not None:
@@ -85,11 +91,14 @@ class CopyMoveDataset(Dataset):
         if "mask" in augmented:
             mask_tensor = self._to_tensor(augmented["mask"], is_mask=True)
 
-        return {
+        sample = {
             "image": image_tensor,
             "mask": mask_tensor,
             "id": image_path.stem,
         }
+        if self.categories is not None:
+            sample["category"] = self.categories[idx]
+        return sample
 
     @staticmethod
     def _to_tensor(arr, is_mask: bool = False) -> torch.Tensor:
