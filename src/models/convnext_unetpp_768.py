@@ -1,4 +1,4 @@
-from .convnext_unetpp_512 import ConvNeXtUNetPP512
+from models.convnext_unetpp_512 import ConvNeXtUNetPP512
 
 
 class ConvNeXtUNetPP768(ConvNeXtUNetPP512):

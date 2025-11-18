@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .self_correlation import SelfCorrelationBlock
+from models.self_correlation import SelfCorrelationBlock
 
 
 class DecoderBlock(nn.Module):

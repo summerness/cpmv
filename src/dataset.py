@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .augmentations import synthetic_copy_move
+from augmentations import synthetic_copy_move
 
 
 def _read_mask(mask_path: Path) -> np.ndarray:
