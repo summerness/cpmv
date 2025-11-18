@@ -103,10 +103,12 @@ def synthetic_copy_move(image: np.ndarray, mask: Optional[np.ndarray], p: float 
         return image, mask if mask is not None else np.zeros(image.shape[:2], dtype=np.uint8)
 
     h, w, _ = image.shape
-    patch_h = random.randint(int(0.1 * h), max(int(0.3 * h), 1))
-    patch_w = random.randint(int(0.1 * w), max(int(0.3 * w), 1))
-    if patch_h <= 0 or patch_w <= 0:
-        return image, mask
+    min_h = max(1, int(0.1 * h))
+    max_h = max(min_h, int(0.3 * h))
+    min_w = max(1, int(0.1 * w))
+    max_w = max(min_w, int(0.3 * w))
+    patch_h = random.randint(min_h, max_h)
+    patch_w = random.randint(min_w, max_w)
 
     y1 = random.randint(0, h - patch_h)
     x1 = random.randint(0, w - patch_w)
@@ -114,7 +116,10 @@ def synthetic_copy_move(image: np.ndarray, mask: Optional[np.ndarray], p: float 
     x2 = x1 + patch_w
 
     patch_img = image[y1:y2, x1:x2].copy()
-    patch_mask = mask[y1:y2, x1:x2].copy() if mask is not None else np.zeros((patch_h, patch_w), dtype=np.float32)
+    if mask is not None:
+        patch_mask = mask[y1:y2, x1:x2].copy()
+    else:
+        patch_mask = np.zeros((patch_h, patch_w), dtype=np.float32)
 
     angle = random.uniform(-30, 30)
     scale = random.uniform(0.8, 1.2)
@@ -145,7 +150,7 @@ def synthetic_copy_move(image: np.ndarray, mask: Optional[np.ndarray], p: float 
     target[ty1:ty2, tx1:tx2] = patch_img
 
     if mask is None:
-        mask = np.zeros((h, w), dtype=np.uint8)
+        mask = np.zeros((h, w), dtype=np.float32)
     elif mask.dtype != np.float32:
         mask = mask.astype(np.float32)
 
