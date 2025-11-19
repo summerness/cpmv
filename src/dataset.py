@@ -70,6 +70,8 @@ class CopyMoveDataset(Dataset):
             else:
                 mask_path = Path(mask_entry)
                 mask = _read_mask(mask_path)
+            if mask.shape != image.shape[:2]:
+                mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
         if self.use_synthetic:
             forged_ratio = float(mask.mean()) if mask is not None and mask.size else 0.0
