@@ -315,25 +315,12 @@ def run_training(cfg: Dict) -> None:
                 if masks.ndim == 3:
                     masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
-                if debug_cfg.get("log_distribution", False):
-                    probs = torch.sigmoid(mask_logits)
-                    logger.info(
-                        "Val distribution e%02d b%03d -> prob mean %.4f std %.4f min %.4f max %.4f",
-                        epoch + 1,
-                        step + 1,
-                        probs.mean().item(),
-                        probs.std().item(),
-                        probs.min().item(),
-                        probs.max().item(),
-                    )
                 if step < debug_val_batches:
                     probs = torch.sigmoid(mask_logits)
                     logger.info(
                         "Val debug e%02d b%03d -> probs mean %.4f max %.4f | mask mean %.4f",
                         epoch + 1,
                         step + 1,
-                        probs.mean().item(),
-                        probs.max().item(),
                         masks.float().mean().item(),
                     )
                     if save_debug_samples and debug_saved < debug_sample_limit:

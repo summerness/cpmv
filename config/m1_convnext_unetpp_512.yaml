@@ -1,57 +1,58 @@
-  seed: 42
+seed: 42
 
-  data:
-    train_csv: data/train.csv
-    image_col: image_path
-    mask_col: mask_path
-    category_col: category
-    image_size: [512, 512]
-    num_workers: 6
-    fold_col: fold
-    fold_id: 0
-    use_synthetic: true
-    synthetic_prob: 0.3
+data:
+  train_csv: data/train.csv
+  image_col: image_path
+  mask_col: mask_path
+  category_col: category
+  image_size: [512, 512]
+  num_workers: 6
+  fold_col: fold
+  fold_id: 0
+  use_synthetic: true
+  synthetic_prob: 0.3
 
-  model:
-    target: models.convnext_unetpp_512.ConvNeXtUNetPP512
-    params:
-      in_channels: 3
-      num_classes: 1
+model:
+  target: models.convnext_unetpp_512.ConvNeXtUNetPP512
+  params:
+    in_channels: 3
+    num_classes: 1
 
-  augmentations:
-    train:
-      horizontal_flip: 0.5
-      vertical_flip: 0.5
-      random_rotate90: 0.5
-      shift_scale_rotate:
-        p: 0.5
-        shift_limit: 0.05
-        scale_limit: 0.1
-        rotate_limit: 30
-      brightness_contrast:
-        p: 0.5
-        brightness_limit: 0.2
-        contrast_limit: 0.2
-      gaussian_blur:
-        p: 0.2
-        blur_limit: 3
-      gauss_noise:
-        p: 0.2
-        var_limit: [5.0, 20.0]
-    val: {}
-
+augmentations:
   train:
-    epochs: 25
-    batch_size: 8
-    val_batch_size: 4
-    lr: 0.0001
-    weight_decay: 0.0001
-    min_lr: 1.0e-6
-    output_dir: outputs/m1_convnext_unetpp_512
-    use_amp: true
-    cls_weight: 0.3
-    scheduler:
-      name: cosine
-    debug:
-      val_batches: 3
-      log_distribution: true
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    random_rotate90: 0.5
+    shift_scale_rotate:
+      p: 0.5
+      shift_limit: 0.05
+      scale_limit: 0.1
+      rotate_limit: 30
+    brightness_contrast:
+      p: 0.5
+      brightness_limit: 0.2
+      contrast_limit: 0.2
+    gaussian_blur:
+      p: 0.2
+      blur_limit: 3
+    gauss_noise:
+      p: 0.2
+      var_limit: [5.0, 20.0]
+  val: {}
+
+train:
+  epochs: 25
+  batch_size: 8
+  val_batch_size: 4
+  lr: 0.0001
+  weight_decay: 0.0001
+  min_lr: 1.0e-6
+  output_dir: outputs/m1_convnext_unetpp_512
+  use_amp: true
+  cls_weight: 0.3
+  scheduler:
+    name: cosine
+  debug:
+    val_batches: 3
+    log_distribution: true
+

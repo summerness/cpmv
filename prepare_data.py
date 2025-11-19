@@ -87,6 +87,7 @@ def main() -> None:
     parser.add_argument("--allow-missing-mask", action="store_true")
     parser.add_argument("--num-folds", type=int, default=0, help="Number of folds to assign (0 to disable).")
     parser.add_argument("--fold-seed", type=int, default=42)
+    parser.add_argument("--no-shuffle", action="store_true", help="Disable final row shuffling before saving CSV.")
     args = parser.parse_args()
 
     dataset_root = Path(args.dataset_root) if args.dataset_root else None
@@ -138,6 +139,12 @@ def main() -> None:
         else:
             combined["fold"] = (range(len(combined)) % args.num_folds)
         print(f"Assigned stratified folds with n_splits={args.num_folds}")
+    if not args.no_shuffle:
+        forged = combined[combined["category"].str.lower() != "authentic"]
+        if not forged.empty:
+            first_forged = forged.sample(n=1, random_state=args.fold_seed)
+            combined = pd.concat([first_forged, combined.drop(first_forged.index)], ignore_index=True)
+        combined = combined.sample(frac=1, random_state=args.fold_seed).reset_index(drop=True)
     combined.to_csv(train_output, index=False)
     print(f"Saved {len(combined)} rows to {train_output}")
 
