@@ -88,7 +88,13 @@ def main() -> None:
         for images, image_ids, shapes in loader:
             images = images.to(device)
             mask_logits, cls_logits = model(images)
-            prob = torch.sigmoid(mask_logits).cpu().numpy()[0, 0]
+            probs = torch.sigmoid(mask_logits)
+            prob = probs.cpu().numpy()[0, 0]
+            if len(rows) == 0:
+                logger = print
+                logger(
+                    f"Inference distribution -> prob mean {probs.mean().item():.4f} std {probs.std().item():.4f} min {probs.min().item():.4f} max {probs.max().item():.4f}"
+                )
             cls_prob = torch.sigmoid(cls_logits).cpu().numpy().reshape(-1)[0]
             h, w = shapes[0]
             resized_prob = cv2.resize(prob, (int(w), int(h)), interpolation=cv2.INTER_LINEAR)
