@@ -24,7 +24,7 @@ def _read_mask(mask_path: Path) -> np.ndarray:
             raise FileNotFoundError(f"Unable to read mask: {mask_path}")
     if mask.ndim == 3:
         mask = mask[..., 0]
-    mask = (mask > 0.5).astype(np.uint8)
+    mask = (mask != 0).astype(np.uint8)
     return mask
 
 
