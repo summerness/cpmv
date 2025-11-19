@@ -252,11 +252,6 @@ def run_training(cfg: Dict) -> None:
     train_cfg = cfg["train"]
     log_every = train_cfg.get("log_every", 50)
     debug_cfg = train_cfg.get("debug", {})
-    debug_val_batches = debug_cfg.get("val_batches", train_cfg.get("debug_val_batches", 0))
-    save_debug_samples = debug_cfg.get("save_samples", False)
-    debug_sample_limit = debug_cfg.get("max_samples", 0)
-    debug_dir = Path(debug_cfg.get("output_dir", save_dir / "debug"))
-    debug_saved = 0
     logger.info(
         "Start training for %d epochs | batch_size=%d | steps_per_epoch=%d",
         epochs,
