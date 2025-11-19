@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
+from sklearn.model_selection import StratifiedKFold
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
 MASK_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".npy", ".npz")
@@ -84,6 +85,8 @@ def main() -> None:
     parser.add_argument("--test-output", type=str, default="data/test.csv")
     parser.add_argument("--sample-submission", type=str, default=None)
     parser.add_argument("--allow-missing-mask", action="store_true")
+    parser.add_argument("--num-folds", type=int, default=0, help="Number of folds to assign (0 to disable).")
+    parser.add_argument("--fold-seed", type=int, default=42)
     args = parser.parse_args()
 
     dataset_root = Path(args.dataset_root) if args.dataset_root else None
@@ -125,6 +128,16 @@ def main() -> None:
     else:
         combined = train_df
 
+    if args.num_folds and args.num_folds > 1:
+        labels = (combined["mask_path"].astype(str).str.len() > 0).astype(int)
+        combined["fold"] = -1
+        if labels.nunique() > 1:
+            skf = StratifiedKFold(n_splits=args.num_folds, shuffle=True, random_state=args.fold_seed)
+            for fold_id, (_, val_idx) in enumerate(skf.split(combined, labels)):
+                combined.loc[val_idx, "fold"] = fold_id
+        else:
+            combined["fold"] = (range(len(combined)) % args.num_folds)
+        print(f"Assigned stratified folds with n_splits={args.num_folds}")
     combined.to_csv(train_output, index=False)
     print(f"Saved {len(combined)} rows to {train_output}")
 
