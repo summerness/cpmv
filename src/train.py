@@ -1,6 +1,7 @@
 import argparse
 import importlib
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -27,7 +28,8 @@ def seed_everything(seed: int = 42) -> None:
 
 
 def setup_logger(output_dir: Path) -> logging.Logger:
-    logger = logging.getLogger("trainer")
+    logger_name = f"trainer_{output_dir}"
+    logger = logging.getLogger(logger_name)
     if logger.handlers:
         return logger
     logger.setLevel(logging.INFO)
@@ -109,11 +111,37 @@ def split_train_val(df: pd.DataFrame, data_cfg: Dict, seed: int) -> Tuple[pd.Dat
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config/config.yaml")
+    parser.add_argument("--fold-id", type=int, default=None, help="Override data.fold_id for cross-validation runs.")
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
+    if args.fold_id is not None:
+        cfg.setdefault("data", {})["fold_id"] = args.fold_id
+
+    data_cfg = cfg.get("data", {})
+    fold_col = data_cfg.get("fold_col")
+    specified_fold = data_cfg.get("fold_id")
+    if specified_fold is not None:
+        run_training(cfg)
+        return
+
+    if fold_col and Path(data_cfg["train_csv"]).exists():
+        df = pd.read_csv(data_cfg["train_csv"], usecols=[fold_col])
+        folds = sorted(df[fold_col].dropna().unique().tolist())
+        if folds:
+            for fid in folds:
+                cfg_fold = deepcopy(cfg)
+                cfg_fold.setdefault("data", {})["fold_id"] = int(fid)
+                print(f"=== Training fold {fid} ===")
+                run_training(cfg_fold)
+            return
+
+    run_training(cfg)
+
+
+def run_training(cfg: Dict) -> None:
     seed_everything(cfg.get("seed", 42))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -125,6 +153,7 @@ def main() -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
     logger = setup_logger(save_dir)
     logger.info("Using device: %s", device)
+    logger.info("Active fold: %s", cfg["data"].get("fold_id", "N/A"))
     logger.info("Training samples: %d | Validation samples: %d", len(train_df), len(val_df))
 
     image_size = tuple(cfg["data"].get("image_size", [512, 512]))
