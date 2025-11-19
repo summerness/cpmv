@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import torch
 import yaml
@@ -248,8 +249,14 @@ def run_training(cfg: Dict) -> None:
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"].get("use_amp", True) and device.type == "cuda")
 
     best_f1 = 0.0
-    log_every = cfg["train"].get("log_every", 50)
-    debug_val_batches = cfg["train"].get("debug_val_batches", 0)
+    train_cfg = cfg["train"]
+    log_every = train_cfg.get("log_every", 50)
+    debug_cfg = train_cfg.get("debug", {})
+    debug_val_batches = debug_cfg.get("val_batches", train_cfg.get("debug_val_batches", 0))
+    save_debug_samples = debug_cfg.get("save_samples", False)
+    debug_sample_limit = debug_cfg.get("max_samples", 0)
+    debug_dir = Path(debug_cfg.get("output_dir", save_dir / "debug"))
+    debug_saved = 0
     logger.info(
         "Start training for %d epochs | batch_size=%d | steps_per_epoch=%d",
         epochs,
@@ -318,6 +325,19 @@ def run_training(cfg: Dict) -> None:
                         probs.max().item(),
                         masks.float().mean().item(),
                     )
+                    if save_debug_samples and debug_saved < debug_sample_limit:
+                        debug_dir.mkdir(parents=True, exist_ok=True)
+                        ids = batch.get("id", [f"{i}" for i in range(len(images))])
+                        probs_np = probs.detach().cpu().numpy()
+                        masks_np = masks.detach().cpu().numpy()
+                        for idx in range(probs_np.shape[0]):
+                            if debug_saved >= debug_sample_limit:
+                                break
+                            sample_id = ids[idx] if idx < len(ids) else f"{idx}"
+                            prefix = f"e{epoch+1:02d}_b{step+1:03d}_{sample_id}"
+                            np.save(debug_dir / f"{prefix}_prob.npy", probs_np[idx, 0])
+                            np.save(debug_dir / f"{prefix}_mask.npy", masks_np[idx, 0])
+                            debug_saved += 1
                 total_loss, _, _ = multitask_loss(
                     mask_logits,
                     masks,
