@@ -315,27 +315,6 @@ def run_training(cfg: Dict) -> None:
                 if masks.ndim == 3:
                     masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
-                if step < debug_val_batches:
-                    probs = torch.sigmoid(mask_logits)
-                    logger.info(
-                        "Val debug e%02d b%03d -> probs mean %.4f max %.4f | mask mean %.4f",
-                        epoch + 1,
-                        step + 1,
-                        masks.float().mean().item(),
-                    )
-                    if save_debug_samples and debug_saved < debug_sample_limit:
-                        debug_dir.mkdir(parents=True, exist_ok=True)
-                        ids = batch.get("id", [f"{i}" for i in range(len(images))])
-                        probs_np = probs.detach().cpu().numpy()
-                        masks_np = masks.detach().cpu().numpy()
-                        for idx in range(probs_np.shape[0]):
-                            if debug_saved >= debug_sample_limit:
-                                break
-                            sample_id = ids[idx] if idx < len(ids) else f"{idx}"
-                            prefix = f"e{epoch+1:02d}_b{step+1:03d}_{sample_id}"
-                            np.save(debug_dir / f"{prefix}_prob.npy", probs_np[idx, 0])
-                            np.save(debug_dir / f"{prefix}_mask.npy", masks_np[idx, 0])
-                            debug_saved += 1
                 total_loss, _, _ = multitask_loss(
                     mask_logits,
                     masks,
