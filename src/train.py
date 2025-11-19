@@ -193,6 +193,8 @@ def main() -> None:
         for batch in train_loader:
             images = batch["image"].to(device)
             masks = batch["mask"].to(device)
+            if masks.ndim == 3:
+                masks = masks.unsqueeze(1)
             cls_targets = (masks.view(masks.size(0), -1).max(dim=1)[0] > 0).float()
 
             optimizer.zero_grad()
@@ -223,6 +225,8 @@ def main() -> None:
             for batch in val_loader:
                 images = batch["image"].to(device)
                 masks = batch["mask"].to(device)
+                if masks.ndim == 3:
+                    masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
                 total_loss, _, _ = multitask_loss(
                     mask_logits,
