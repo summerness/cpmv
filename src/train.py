@@ -249,6 +249,7 @@ def run_training(cfg: Dict) -> None:
 
     best_f1 = 0.0
     log_every = cfg["train"].get("log_every", 50)
+    debug_val_batches = cfg["train"].get("debug_val_batches", 0)
     logger.info(
         "Start training for %d epochs | batch_size=%d | steps_per_epoch=%d",
         epochs,
@@ -307,10 +308,12 @@ def run_training(cfg: Dict) -> None:
                 if masks.ndim == 3:
                     masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
-                if step == 0 and epoch == 0:
+                if step < debug_val_batches:
                     probs = torch.sigmoid(mask_logits)
                     logger.info(
-                        "Validation debug -> probs mean %.4f max %.4f | mask mean %.4f",
+                        "Val debug e%02d b%03d -> probs mean %.4f max %.4f | mask mean %.4f",
+                        epoch + 1,
+                        step + 1,
                         probs.mean().item(),
                         probs.max().item(),
                         masks.float().mean().item(),
