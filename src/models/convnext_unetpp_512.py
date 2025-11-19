@@ -1,9 +1,10 @@
 from typing import Tuple
 
-import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from models.utils import safe_timm_create
 
 
 class ConvBlock(nn.Module):
@@ -74,7 +75,7 @@ class ConvNeXtUNetPP512(nn.Module):
         cls_dropout: float = 0.2,
     ) -> None:
         super().__init__()
-        self.encoder = timm.create_model(
+        self.encoder = safe_timm_create(
             backbone,
             pretrained=True,
             in_chans=in_channels,

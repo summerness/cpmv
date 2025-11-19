@@ -1,11 +1,11 @@
 from typing import Tuple
 
-import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from models.self_correlation import SelfCorrelationBlock
+from models.utils import safe_timm_create
 
 
 class DecoderBlock(nn.Module):
@@ -34,7 +34,7 @@ class CMSegConvNeXt512(nn.Module):
         backbone: str = "convnext_tiny",
     ) -> None:
         super().__init__()
-        self.encoder = timm.create_model(
+        self.encoder = safe_timm_create(
             backbone,
             pretrained=True,
             in_chans=in_channels,

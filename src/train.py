@@ -155,6 +155,15 @@ def run_training(cfg: Dict) -> None:
     logger.info("Using device: %s", device)
     logger.info("Active fold: %s", cfg["data"].get("fold_id", "N/A"))
     logger.info("Training samples: %d | Validation samples: %d", len(train_df), len(val_df))
+    mask_col = cfg["data"].get("mask_col", "mask_path")
+    if mask_col in train_df.columns:
+        train_ratio = (train_df[mask_col].fillna("").astype(str).str.len() > 0).mean()
+        val_ratio = (val_df[mask_col].fillna("").astype(str).str.len() > 0).mean()
+    else:
+        train_ratio = val_ratio = 0.0
+    logger.info("Forged sample ratio -> train: %.4f val: %.4f", train_ratio, val_ratio)
+    if val_ratio == 0:
+        logger.warning("Validation set contains no forged masks; F1 will stay at 0 until positives appear.")
 
     image_size = tuple(cfg["data"].get("image_size", [512, 512]))
     aug_cfg = cfg.get("augmentations", {})
@@ -292,12 +301,20 @@ def run_training(cfg: Dict) -> None:
         val_f1 = 0.0
         model.eval()
         with torch.no_grad():
-            for batch in val_loader:
+            for step, batch in enumerate(val_loader):
                 images = batch["image"].to(device)
                 masks = batch["mask"].to(device)
                 if masks.ndim == 3:
                     masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
+                if step == 0 and epoch == 0:
+                    probs = torch.sigmoid(mask_logits)
+                    logger.info(
+                        "Validation debug -> probs mean %.4f max %.4f | mask mean %.4f",
+                        probs.mean().item(),
+                        probs.max().item(),
+                        masks.float().mean().item(),
+                    )
                 total_loss, _, _ = multitask_loss(
                     mask_logits,
                     masks,

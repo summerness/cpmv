@@ -1,9 +1,10 @@
 from typing import Sequence
 
-import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from models.utils import safe_timm_create
 
 
 class ASPP(nn.Module):
@@ -67,7 +68,7 @@ class SwinDeepLab512(nn.Module):
         low_level_idx: int = 0,
     ) -> None:
         super().__init__()
-        self.encoder = timm.create_model(
+        self.encoder = safe_timm_create(
             backbone,
             pretrained=True,
             in_chans=in_channels,

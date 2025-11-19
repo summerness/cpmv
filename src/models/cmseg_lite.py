@@ -1,9 +1,10 @@
 from typing import Sequence, Tuple
 
-import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from models.utils import safe_timm_create
 
 
 class SelfCorrelation(nn.Module):
@@ -66,7 +67,7 @@ class CMSegLite(nn.Module):
         multi_scale_corr: bool = False,
     ) -> None:
         super().__init__()
-        self.encoder = timm.create_model(
+        self.encoder = safe_timm_create(
             backbone,
             pretrained=pretrained,
             in_chans=in_channels,
