@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -23,6 +24,24 @@ def seed_everything(seed: int = 42) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def setup_logger(output_dir: Path) -> logging.Logger:
+    logger = logging.getLogger("trainer")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    file_handler = logging.FileHandler(output_dir / "train.log")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger
 
 
 def load_paths(
@@ -102,6 +121,12 @@ def main() -> None:
     full_df = pd.read_csv(cfg["data"]["train_csv"])
     train_df, val_df = split_train_val(full_df, cfg["data"], cfg.get("seed", 42))
 
+    save_dir = Path(cfg["train"].get("output_dir", "outputs"))
+    save_dir.mkdir(parents=True, exist_ok=True)
+    logger = setup_logger(save_dir)
+    logger.info("Using device: %s", device)
+    logger.info("Training samples: %d | Validation samples: %d", len(train_df), len(val_df))
+
     image_size = tuple(cfg["data"].get("image_size", [512, 512]))
     aug_cfg = cfg.get("augmentations", {})
     train_aug = get_train_augmentations(image_size, aug_cfg.get("train"))
@@ -136,6 +161,7 @@ def main() -> None:
         augment=val_aug,
         use_synthetic=False,
     )
+    logger.info("Train augmentation config: %s", aug_cfg.get("train", {}))
 
     train_loader = DataLoader(
         train_dataset,
@@ -183,14 +209,19 @@ def main() -> None:
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"].get("use_amp", True) and device.type == "cuda")
 
-    save_dir = Path(cfg["train"].get("output_dir", "outputs"))
-    save_dir.mkdir(parents=True, exist_ok=True)
     best_f1 = 0.0
+    log_every = cfg["train"].get("log_every", 50)
+    logger.info(
+        "Start training for %d epochs | batch_size=%d | steps_per_epoch=%d",
+        epochs,
+        cfg["train"].get("batch_size", 4),
+        len(train_loader),
+    )
 
     for epoch in range(epochs):
         model.train()
         running_loss = 0.0
-        for batch in train_loader:
+        for step, batch in enumerate(train_loader):
             images = batch["image"].to(device)
             masks = batch["mask"].to(device)
             if masks.ndim == 3:
@@ -214,6 +245,16 @@ def main() -> None:
                 scheduler.step()
 
             running_loss += total_loss.item()
+            if log_every and (step + 1) % log_every == 0:
+                logger.info(
+                    "Epoch %d | Step %d/%d | total=%.4f seg=%.4f cls=%.4f",
+                    epoch + 1,
+                    step + 1,
+                    len(train_loader),
+                    total_loss.item(),
+                    seg_loss.item(),
+                    cls_loss.item(),
+                )
 
         if not step_per_batch:
             scheduler.step()
@@ -242,8 +283,12 @@ def main() -> None:
         avg_train_loss = running_loss / max(len(train_loader), 1)
         avg_val_loss = val_loss / max(len(val_loader), 1)
 
-        print(
-            f"Epoch {epoch+1}: train_loss={avg_train_loss:.4f} val_loss={avg_val_loss:.4f} val_f1={val_f1:.4f}"
+        logger.info(
+            "Epoch %d complete | train_loss=%.4f val_loss=%.4f val_f1=%.4f",
+            epoch + 1,
+            avg_train_loss,
+            avg_val_loss,
+            val_f1,
         )
 
         if val_f1 > best_f1:
@@ -255,7 +300,7 @@ def main() -> None:
                 "config": cfg,
             }
             torch.save(ckpt, save_dir / "best.ckpt")
-            print(f"Saved new best checkpoint with F1 {best_f1:.4f}")
+            logger.info("Saved new best checkpoint with F1 %.4f", best_f1)
 
 
 if __name__ == "__main__":
