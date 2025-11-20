@@ -9,9 +9,10 @@ data:
   num_workers: 8        # 可酌情再调高（受限于CPU/内存和I/O）
   fold_col: fold
   fold_id: 0
+  exclude_sources: ["supplemental"]  # 训练时排除补充集
   # overfit_n: 50          # 50 张极限过拟合实验，train/val 同一子集
   # 强人造伪造，动态扩充数据集
-  use_synthetic: true
+  use_synthetic: false
   synthetic_prob: 0.5       # 合成副本中 50% 注入伪造，剩下保持纯净
   synthetic_times: 2        # 每个样本注入 2 块随机区域
   synthetic_copies: 3       # 控制 forged 占比，减少复制轮数
@@ -22,27 +23,33 @@ model:
   params:
     in_channels: 3
     num_classes: 1
+    cls_dropout: 0.3      # 适度增加分类头 dropout 稳定泛化
 
 augmentations:
   train:
     horizontal_flip: 0.5
     vertical_flip: 0.5
-    random_rotate90: 0.0
+
+    random_rotate90: 0.5
+
     shift_scale_rotate:
-      p: 0.0
-      shift_limit: 0.0
-      scale_limit: 0.0
-      rotate_limit: 0
+      p: 0.4
+      shift_limit: 0.05
+      scale_limit: 0.10
+      rotate_limit: 30
+
     brightness_contrast:
-      p: 0.0
+      p: 0.4
       brightness_limit: 0.2
       contrast_limit: 0.2
+
     gaussian_blur:
-      p: 0.0
+      p: 0.15
       blur_limit: 3
+
     gauss_noise:
-      p: 0.0
-      var_limit: [5.0, 20.0]
+      p: 0.15
+      var_limit: [5.0, 15.0]
   val: {}
 
 train:
@@ -50,7 +57,7 @@ train:
   batch_size: 32
   val_batch_size: 32
   lr: 5.0e-5            # batch 降低后相应调低LR，兼顾稳定性
-  weight_decay: 0.0001
+  weight_decay: 0.0003  # 适度加大L2正则
   min_lr: 1.0e-6
   output_dir: outputs/m1_convnext_unetpp_512_synth10x
   use_amp: true
@@ -62,6 +69,9 @@ train:
     log_distribution: true
   log_train_f1: true
   train_f1_batches: 64   # 可选，限制训练F1评估批次数
+  save_val_visual:
+    num_samples: 8       # 每个 epoch 保存若干 val forged 样本（原图/GT/Pred/overlay）
+    threshold: 0.5
   eval_sweep:
     thresholds: [0.2, 0.25, 0.3, 0.35, 0.4,0.45,0.5]
     areas: [0, 50, 100, 200]

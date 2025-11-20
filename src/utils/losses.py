@@ -31,19 +31,14 @@ class SegmentationLoss(nn.Module):
 
 
 class MultiTaskLoss(nn.Module):
-    """Uncertainty-weighted multi-task loss (Kendall & Gal)."""
+    """Simple weighted sum without可训练权重."""
 
-    def __init__(self) -> None:
+    def __init__(self, cls_weight: float = 0.2) -> None:
         super().__init__()
-        self.log_sigma_seg = nn.Parameter(torch.tensor(0.0))
-        self.log_sigma_cls = nn.Parameter(torch.tensor(0.0))
+        self.cls_weight = cls_weight
 
     def forward(self, seg_loss: torch.Tensor, cls_loss: torch.Tensor) -> torch.Tensor:
-        sigma_seg = torch.exp(self.log_sigma_seg)
-        sigma_cls = torch.exp(self.log_sigma_cls)
-        loss = (seg_loss / (2 * sigma_seg**2)) + self.log_sigma_seg
-        loss = loss + (cls_loss / (2 * sigma_cls**2)) + self.log_sigma_cls
-        return loss
+        return seg_loss + self.cls_weight * cls_loss
 
 
 def multitask_loss(

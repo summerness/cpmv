@@ -151,6 +151,13 @@ def run_training(cfg: Dict) -> None:
 
     data_cfg = cfg["data"]
     full_df = pd.read_csv(data_cfg["train_csv"])
+    exclude_sources = data_cfg.get("exclude_sources", [])
+    if exclude_sources and "source" in full_df.columns:
+        before = len(full_df)
+        full_df = full_df[~full_df["source"].isin(exclude_sources)].reset_index(drop=True)
+        after = len(full_df)
+        if before != after:
+            print(f"[Data] Filtered sources {exclude_sources}: {before} -> {after}")
     overfit_n = data_cfg.get("overfit_n", 0)
     if overfit_n and overfit_n > 0:
         train_df = full_df.sample(
@@ -271,6 +278,9 @@ def run_training(cfg: Dict) -> None:
     log_train_f1 = train_cfg.get("log_train_f1", False)
     max_train_f1_batches = train_cfg.get("train_f1_batches")
     sweep_cfg = train_cfg.get("eval_sweep", {})
+    viz_cfg = train_cfg.get("save_val_visual", {})
+    viz_count = int(viz_cfg.get("num_samples", 0))
+    viz_threshold_cfg = float(viz_cfg.get("threshold", 0.5))
     def _expand_range(val):
         if isinstance(val, (list, tuple)) and len(val) == 3:
             start, stop, step = val
@@ -345,6 +355,8 @@ def run_training(cfg: Dict) -> None:
         val_cls_count = 0
         val_cls_pos_sum = 0.0
         val_cls_pos_count = 0
+        val_visuals: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+        best_sweep_combo = None
         model.eval()
         with torch.no_grad():
             for step, batch in enumerate(val_loader):
@@ -374,6 +386,19 @@ def run_training(cfg: Dict) -> None:
                     val_cls_pos_count += pos_idx.sum().item()
                 if sweep_probs is not None:
                     sweep_probs.append((torch.sigmoid(mask_logits).detach().cpu(), masks.detach().cpu()))
+                # 保存部分验证集可视化（仅 forged 样本）
+                if viz_count > 0 and len(val_visuals) < viz_count:
+                    probs = torch.sigmoid(mask_logits)
+                    for b in range(images.size(0)):
+                        if len(val_visuals) >= viz_count:
+                            break
+                        if masks[b].max() <= 0:
+                            continue
+                        img_np = images[b].detach().cpu().numpy()
+                        img_np = (np.transpose(img_np, (1, 2, 0)) * 255.0).clip(0, 255).astype(np.uint8)
+                        gt_np = masks[b, 0].detach().cpu().numpy()
+                        pr_np = probs[b, 0].detach().cpu().numpy()
+                        val_visuals.append((img_np, gt_np, pr_np))
 
         train_f1 = None
         if log_train_f1:
@@ -402,7 +427,6 @@ def run_training(cfg: Dict) -> None:
                 val_cls_prob_sum / val_cls_count,
                 (val_cls_pos_sum / val_cls_pos_count) if val_cls_pos_count > 0 else 0.0,
             )
-
         if sweep_probs is not None:
             def f1_np(pred, gt):
                 pred = pred.astype(np.uint8)
@@ -430,7 +454,32 @@ def run_training(cfg: Dict) -> None:
                         best_score = score
                         best_combo = (thr, area)
             if best_combo is not None:
+                best_sweep_combo = best_combo
                 logger.info("Sweep best -> thr=%.3f area=%d f1=%.4f", best_combo[0], best_combo[1], best_score)
+
+        # 保存验证可视化结果（阈值优先用 sweep 最优）
+        if viz_count > 0 and val_visuals:
+            viz_dir = save_dir / "val_visuals"
+            viz_dir.mkdir(parents=True, exist_ok=True)
+            viz_threshold = best_sweep_combo[0] if best_sweep_combo else viz_threshold_cfg
+            for i, (img_np, gt_np, pr_np) in enumerate(val_visuals):
+                gt_vis = (gt_np * 255).astype(np.uint8)
+                pr_bin = (pr_np > viz_threshold).astype(np.uint8) * 255
+                pr_vis = np.stack([pr_bin, np.zeros_like(pr_bin), np.zeros_like(pr_bin)], axis=-1)
+                gt_color = np.stack([np.zeros_like(gt_vis), gt_vis, np.zeros_like(gt_vis)], axis=-1)
+                overlay = cv2.addWeighted(img_np, 0.7, pr_vis, 0.3, 0)
+                overlay = cv2.addWeighted(overlay, 0.7, gt_color, 0.3, 0)
+                canvas = np.concatenate(
+                    [
+                        img_np,
+                        np.stack([gt_vis] * 3, axis=-1),
+                        np.stack([pr_bin] * 3, axis=-1),
+                        overlay,
+                    ],
+                    axis=1,
+                )
+                out_path = viz_dir / f"epoch{epoch+1:03d}_sample{i:02d}.png"
+                cv2.imwrite(str(out_path), cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
 
         logger.info(
             "Epoch %d complete | train_loss=%.4f val_loss=%.4f val_f1=%.4f%s",
