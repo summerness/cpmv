@@ -275,12 +275,12 @@ def run_training(cfg: Dict) -> None:
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
                 mask_logits, cls_logits = model(images)
+                cls_logits = cls_logits.view(-1, 1)
                 seg_loss = SegmentationLoss()(mask_logits, masks)
-                cls_logits_ce = (
-                    torch.cat([-cls_logits, cls_logits], dim=1)
-                    if cls_logits.shape[1] == 1
-                    else cls_logits
-                )
+                if cls_logits.shape[1] == 1:
+                    cls_logits_ce = torch.cat([-cls_logits, cls_logits], dim=1)
+                else:
+                    cls_logits_ce = cls_logits
                 cls_loss = F.cross_entropy(cls_logits_ce, cls_targets.long().view(-1))
                 total_loss = multitask_wrapper(seg_loss, cls_loss)
             scaler.scale(total_loss).backward()
@@ -315,12 +315,9 @@ def run_training(cfg: Dict) -> None:
                     masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
                 val_seg_loss = SegmentationLoss()(mask_logits, masks)
+                cls_logits = cls_logits.view(-1, 1)
                 val_cls_targets = (masks.view(masks.size(0), -1).max(dim=1)[0] > 0).float()
-                cls_logits_ce = (
-                    torch.cat([-cls_logits, cls_logits], dim=1)
-                    if cls_logits.shape[1] == 1
-                    else cls_logits
-                )
+                cls_logits_ce = torch.cat([-cls_logits, cls_logits], dim=1)
                 val_cls_loss = F.cross_entropy(cls_logits_ce, val_cls_targets.long().view(-1))
                 total_loss = multitask_wrapper(val_seg_loss, val_cls_loss)
                 val_loss += total_loss.item()
