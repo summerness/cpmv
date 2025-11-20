@@ -156,3 +156,11 @@ def synthetic_copy_move(image: np.ndarray, mask: Optional[np.ndarray], p: float 
 
     mask[ty1:ty2, tx1:tx2] = np.clip(mask[ty1:ty2, tx1:tx2] + (patch_mask > 0).astype(np.float32), 0, 1)
     return target, mask
+
+
+def multi_copy_move(image: np.ndarray, mask: Optional[np.ndarray], num_patches: int = 2, p: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+    """在一张图上重复做多次 copy-move，适用于弱增广场景。"""
+    out_img, out_mask = image.copy(), mask.copy() if mask is not None else None
+    for _ in range(num_patches):
+        out_img, out_mask = synthetic_copy_move(out_img, out_mask, p=p)
+    return out_img, out_mask

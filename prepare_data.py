@@ -16,14 +16,15 @@ def list_images(directory: Path) -> List[Path]:
     return sorted([p for p in files if p.is_file()])
 
 
-def find_mask(mask_dir: Optional[Path], stem: str) -> Optional[Path]:
+def find_masks(mask_dir: Optional[Path], stem: str) -> list[Path]:
     if mask_dir is None:
-        return None
+        return []
+    found = []
     for ext in MASK_EXTS:
-        candidate = mask_dir / f"{stem}{ext}"
-        if candidate.exists():
-            return candidate
-    return None
+        # 支持同一前缀的多文件（例如多块伪造区域）
+        candidates = sorted(mask_dir.glob(f"{stem}*{ext}"))
+        found.extend([c for c in candidates if c.is_file()])
+    return found
 
 
 def build_train_df(
@@ -37,16 +38,16 @@ def build_train_df(
         stem = image_path.stem
         rel_parts = image_path.relative_to(image_dir).parts
         category = rel_parts[0] if len(rel_parts) > 1 else "root"
-        mask_path = None
+        mask_path = []
         if category.lower() != "authentic":
-            mask_path = find_mask(mask_dir, stem)
-            if mask_path is None:
+            mask_path = find_masks(mask_dir, stem)
+            if len(mask_path) == 0:
                 if allow_missing_mask:
                     continue
                 raise FileNotFoundError(f"Mask for {image_path} not found in {mask_dir}")
         rows.append({
             "image_path": str(image_path),
-            "mask_path": str(mask_path) if mask_path is not None else "",
+            "mask_path": "|".join([str(p) for p in mask_path]) if len(mask_path) > 0 else "",
             "source": source_label,
             "category": category,
         })

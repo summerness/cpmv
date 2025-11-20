@@ -10,21 +10,46 @@ from torch.utils.data import Dataset
 from augmentations import synthetic_copy_move
 
 
-def _read_mask(mask_path: Path) -> np.ndarray:
-    ext = mask_path.suffix.lower()
-    if ext == ".npy":
-        mask = np.load(mask_path)
-    elif ext == ".npz":
-        with np.load(mask_path) as data:
-            key = list(data.files)[0]
-            mask = data[key]
+def _read_mask(mask_path) -> np.ndarray:
+    """支持单个路径或 'path1|path2' 形式的多路径，返回合并后的二值 mask."""
+
+    def _load_single(p: Path) -> np.ndarray:
+        ext = p.suffix.lower()
+        if ext == ".npy":
+            m = np.load(p)
+        elif ext == ".npz":
+            with np.load(p) as data:
+                key = list(data.files)[0]
+                m = data[key]
+        else:
+            m = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if m is None:
+                raise FileNotFoundError(f"Unable to read mask: {p}")
+        if m.ndim == 3:
+            # 如果 npy/npz 存成 [N,H,W] 或多通道，取最大值聚合
+            if m.shape[0] not in (m.shape[1], m.shape[2]):
+                m = m.max(axis=0)
+            else:
+                m = m[..., 0]
+        return (m != 0).astype(np.uint8)
+
+    masks = []
+    if isinstance(mask_path, (str, Path)):
+        parts = str(mask_path).split("|") if isinstance(mask_path, str) else [mask_path]
+        for part in parts:
+            if str(part).strip():
+                masks.append(_load_single(Path(part)))
     else:
-        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-        if mask is None:
-            raise FileNotFoundError(f"Unable to read mask: {mask_path}")
-    if mask.ndim == 3:
-        mask = mask[..., 0]
-    mask = (mask != 0).astype(np.uint8)
+        for p in mask_path:
+            masks.append(_load_single(Path(p)))
+
+    if not masks:
+        raise FileNotFoundError("No mask paths provided")
+    mask = masks[0]
+    for m in masks[1:]:
+        if m.shape != mask.shape:
+            m = cv2.resize(m, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+        mask = np.maximum(mask, m)
     return mask
 
 
@@ -39,6 +64,8 @@ class CopyMoveDataset(Dataset):
         augment: Optional[Callable] = None,
         use_synthetic: bool = False,
         synthetic_prob: float = 0.25,
+        synthetic_times: int = 1,
+        synthetic_copies: int = 0,
     ) -> None:
         if mask_paths is not None and len(image_paths) != len(mask_paths):
             raise ValueError("image_paths and mask_paths must have identical length")
@@ -51,12 +78,18 @@ class CopyMoveDataset(Dataset):
         self.augment = augment
         self.use_synthetic = use_synthetic
         self.synthetic_prob = synthetic_prob
+        self.synthetic_times = max(1, synthetic_times)
+        self.synthetic_copies = max(0, synthetic_copies)
+        self.base_len = len(self.image_paths)
 
     def __len__(self) -> int:
-        return len(self.image_paths)
+        return self.base_len * (1 + self.synthetic_copies)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        image_path = self.image_paths[idx]
+        base_idx = idx % self.base_len
+        is_syn_dup = idx >= self.base_len
+
+        image_path = self.image_paths[base_idx]
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if image is None:
             raise FileNotFoundError(f"Unable to read image: {image_path}")
@@ -64,7 +97,7 @@ class CopyMoveDataset(Dataset):
 
         mask = None
         if self.mask_paths is not None:
-            mask_entry = self.mask_paths[idx]
+            mask_entry = self.mask_paths[base_idx]
             if mask_entry is None or str(mask_entry).strip() == "":
                 mask = np.zeros(image.shape[:2], dtype=np.uint8)
             else:
@@ -73,11 +106,21 @@ class CopyMoveDataset(Dataset):
             if mask.shape != image.shape[:2]:
                 mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
-        if self.use_synthetic:
+        if is_syn_dup:
+            if mask is None:
+                mask = np.zeros(image.shape[:2], dtype=np.float32)
+            for _ in range(self.synthetic_times):
+                image, mask = synthetic_copy_move(image, mask, p=1.0)
+
+        elif self.use_synthetic:
             forged_ratio = float(mask.mean()) if mask is not None and mask.size else 0.0
-            apply_prob = self.synthetic_prob
-            if (mask is None or forged_ratio < 0.01) and random.random() < apply_prob:
-                image, mask = synthetic_copy_move(image, mask if mask is not None else np.zeros((image.shape[0], image.shape[1]), dtype=np.float32), p=1.0)
+            for _ in range(self.synthetic_times):
+                if (mask is None or forged_ratio < 0.01) and random.random() < self.synthetic_prob:
+                    image, mask = synthetic_copy_move(
+                        image,
+                        mask if mask is not None else np.zeros((image.shape[0], image.shape[1]), dtype=np.float32),
+                        p=1.0,
+                    )
 
         data = {"image": image}
         if mask is not None:
