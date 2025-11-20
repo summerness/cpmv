@@ -106,31 +106,28 @@ class CopyMoveDataset(Dataset):
                 mask = np.zeros(image.shape[:2], dtype=np.uint8)
             else:
                 mask_path = Path(mask_entry)
-                try:
-                    mask = _read_mask(mask_path)
-                except FileNotFoundError:
-                    if getattr(self, "_warn_missing", True):
-                        print(f"[CopyMoveDataset] Missing mask files for {mask_path}; using zeros.")
-                        self._warn_missing = False
-                    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                mask = _read_mask(mask_path)
             if mask.shape != image.shape[:2]:
                 mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
+        forged_ratio = float(mask.mean()) if mask is not None and mask.size else 0.0
+
         if is_syn_dup:
-            if mask is None:
-                mask = np.zeros(image.shape[:2], dtype=np.float32)
-            for _ in range(self.synthetic_times):
-                image, mask = synthetic_copy_move(image, mask, p=1.0)
+            if forged_ratio < 0.01:
+                if mask is None:
+                    mask = np.zeros(image.shape[:2], dtype=np.float32)
+                for _ in range(self.synthetic_times):
+                    image, mask = synthetic_copy_move(image, mask, p=1.0)
 
         elif self.use_synthetic:
-            forged_ratio = float(mask.mean()) if mask is not None and mask.size else 0.0
-            for _ in range(self.synthetic_times):
-                if (mask is None or forged_ratio < 0.01) and random.random() < self.synthetic_prob:
-                    image, mask = synthetic_copy_move(
-                        image,
-                        mask if mask is not None else np.zeros((image.shape[0], image.shape[1]), dtype=np.float32),
-                        p=1.0,
-                    )
+            if forged_ratio < 0.01:
+                for _ in range(self.synthetic_times):
+                    if random.random() < self.synthetic_prob:
+                        image, mask = synthetic_copy_move(
+                            image,
+                            mask if mask is not None else np.zeros((image.shape[0], image.shape[1]), dtype=np.float32),
+                            p=1.0,
+                        )
 
         data = {"image": image}
         if mask is not None:
