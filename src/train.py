@@ -206,6 +206,7 @@ def run_training(cfg: Dict) -> None:
         synthetic_prob=cfg["data"].get("synthetic_prob", 0.25),
         synthetic_times=cfg["data"].get("synthetic_times", 1),
         synthetic_copies=cfg["data"].get("synthetic_copies", 0),
+        synthetic_on_base=cfg["data"].get("synthetic_on_base", False),
     )
     val_dataset = CopyMoveDataset(
         val_imgs,

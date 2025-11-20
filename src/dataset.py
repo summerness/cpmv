@@ -70,6 +70,7 @@ class CopyMoveDataset(Dataset):
         synthetic_prob: float = 0.25,
         synthetic_times: int = 1,
         synthetic_copies: int = 0,
+        synthetic_on_base: bool = False,
     ) -> None:
         if mask_paths is not None and len(image_paths) != len(mask_paths):
             raise ValueError("image_paths and mask_paths must have identical length")
@@ -84,6 +85,7 @@ class CopyMoveDataset(Dataset):
         self.synthetic_prob = synthetic_prob
         self.synthetic_times = max(1, synthetic_times)
         self.synthetic_copies = max(0, synthetic_copies)
+        self.synthetic_on_base = synthetic_on_base
         self.base_len = len(self.image_paths)
         # 记录 authentic 样本索引用于生成 copy-move 样本
         self.authentic_indices = []
@@ -132,7 +134,7 @@ class CopyMoveDataset(Dataset):
                 for _ in range(self.synthetic_times):
                     image, mask = synthetic_copy_move(image, mask, p=1.0)
 
-        elif self.use_synthetic:
+        elif self.use_synthetic and self.synthetic_on_base:
             if forged_ratio < 0.01:
                 for _ in range(self.synthetic_times):
                     if random.random() < self.synthetic_prob:
