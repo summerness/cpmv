@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from augmentations import get_train_augmentations, get_valid_augmentations
 from dataset import CopyMoveDataset
-from utils.losses import multitask_loss
+from utils.losses import MultiTaskLoss, SegmentationLoss
 from utils.metrics import compute_f1
 
 
@@ -249,6 +249,7 @@ def run_training(cfg: Dict) -> None:
         step_per_batch = False
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"].get("use_amp", True) and device.type == "cuda")
+    multitask_wrapper = MultiTaskLoss()
 
     best_f1 = 0.0
     train_cfg = cfg["train"]
@@ -274,13 +275,14 @@ def run_training(cfg: Dict) -> None:
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
                 mask_logits, cls_logits = model(images)
-                total_loss, seg_loss, cls_loss = multitask_loss(
-                    mask_logits,
-                    masks,
-                    cls_logits,
-                    cls_targets,
-                    cls_weight=cfg["train"].get("cls_weight", 0.3),
+                seg_loss = SegmentationLoss()(mask_logits, masks)
+                cls_logits_ce = (
+                    torch.cat([-cls_logits, cls_logits], dim=1)
+                    if cls_logits.shape[1] == 1
+                    else cls_logits
                 )
+                cls_loss = F.cross_entropy(cls_logits_ce, cls_targets.long().view(-1))
+                total_loss = multitask_wrapper(seg_loss, cls_loss)
             scaler.scale(total_loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -312,13 +314,15 @@ def run_training(cfg: Dict) -> None:
                 if masks.ndim == 3:
                     masks = masks.unsqueeze(1)
                 mask_logits, cls_logits = model(images)
-                total_loss, _, _ = multitask_loss(
-                    mask_logits,
-                    masks,
-                    cls_logits,
-                    (masks.view(masks.size(0), -1).max(dim=1)[0] > 0).float(),
-                    cls_weight=cfg["train"].get("cls_weight", 0.3),
+                val_seg_loss = SegmentationLoss()(mask_logits, masks)
+                val_cls_targets = (masks.view(masks.size(0), -1).max(dim=1)[0] > 0).float()
+                cls_logits_ce = (
+                    torch.cat([-cls_logits, cls_logits], dim=1)
+                    if cls_logits.shape[1] == 1
+                    else cls_logits
                 )
+                val_cls_loss = F.cross_entropy(cls_logits_ce, val_cls_targets.long().view(-1))
+                total_loss = multitask_wrapper(val_seg_loss, val_cls_loss)
                 val_loss += total_loss.item()
                 val_f1 += compute_f1(mask_logits, masks)
 
