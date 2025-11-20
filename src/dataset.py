@@ -152,7 +152,7 @@ class CopyMoveDataset(Dataset):
             "id": image_path.stem,
         }
         if self.categories is not None:
-            sample["category"] = self.categories[idx]
+            sample["category"] = self.categories[base_idx]
         return sample
 
     @staticmethod
