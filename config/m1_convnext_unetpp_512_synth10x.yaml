@@ -14,7 +14,7 @@ data:
   use_synthetic: true
   synthetic_prob: 1.0       # 原始样本也尽量注入
   synthetic_times: 2        # 每个样本注入 2 块随机区域
-  synthetic_copies: 9       # 额外复制 9 份，总量约 10 倍
+  synthetic_copies: 9       # 额外复制 9 份，来自 authentic 池，标签=forged
   synthetic_on_base: false  # 原始样本保持原标签，合成样本用于伪造
 
 model:
@@ -65,4 +65,3 @@ train:
   eval_sweep:
     thresholds: [0.2, 0.25, 0.3, 0.35, 0.4,0.45,0.5]
     areas: [0, 50, 100, 200]
-

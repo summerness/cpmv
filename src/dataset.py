@@ -89,19 +89,31 @@ class CopyMoveDataset(Dataset):
         self.base_len = len(self.image_paths)
         # 记录 authentic 样本索引用于生成 copy-move 样本
         self.authentic_indices = []
-        if self.mask_paths is not None:
+        if self.categories is not None:
+            self.authentic_indices = [i for i, cat in enumerate(self.categories) if cat == "authentic"]
+        elif self.mask_paths is not None:
             for i, m in enumerate(self.mask_paths):
                 if m is None or str(m).strip() == "":
                     self.authentic_indices.append(i)
+        # 为合成样本预构建池：只复制 authentic 索引
+        self.synthetic_pool: List[int] = []
+        if self.synthetic_copies > 0 and self.authentic_indices:
+            for _ in range(self.synthetic_copies):
+                self.synthetic_pool.extend(self.authentic_indices)
+        self._warn_missing = True
 
     def __len__(self) -> int:
-        return self.base_len * (1 + self.synthetic_copies)
+        return self.base_len + len(self.synthetic_pool)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        base_idx = idx % self.base_len
         is_syn_dup = idx >= self.base_len
-        if is_syn_dup and self.authentic_indices:
-            base_idx = random.choice(self.authentic_indices)
+        if is_syn_dup:
+            syn_idx = idx - self.base_len
+            if not self.synthetic_pool:
+                raise IndexError("Synthetic pool is empty but synthetic index requested.")
+            base_idx = self.synthetic_pool[syn_idx % len(self.synthetic_pool)]
+        else:
+            base_idx = idx
 
         image_path = self.image_paths[base_idx]
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -165,9 +177,7 @@ class CopyMoveDataset(Dataset):
         }
         if self.categories is not None:
             cat = self.categories[base_idx]
-            if is_syn_dup:
-                cat = "forged"
-            sample["category"] = cat
+            sample["category"] = "forged" if is_syn_dup else cat
         return sample
 
     @staticmethod
