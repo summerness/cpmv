@@ -85,6 +85,12 @@ class CopyMoveDataset(Dataset):
         self.synthetic_times = max(1, synthetic_times)
         self.synthetic_copies = max(0, synthetic_copies)
         self.base_len = len(self.image_paths)
+        # 记录 authentic 样本索引用于生成 copy-move 样本
+        self.authentic_indices = []
+        if self.mask_paths is not None:
+            for i, m in enumerate(self.mask_paths):
+                if m is None or str(m).strip() == "":
+                    self.authentic_indices.append(i)
 
     def __len__(self) -> int:
         return self.base_len * (1 + self.synthetic_copies)
@@ -92,6 +98,8 @@ class CopyMoveDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         base_idx = idx % self.base_len
         is_syn_dup = idx >= self.base_len
+        if is_syn_dup and self.authentic_indices:
+            base_idx = random.choice(self.authentic_indices)
 
         image_path = self.image_paths[base_idx]
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -105,8 +113,13 @@ class CopyMoveDataset(Dataset):
             if mask_entry is None or str(mask_entry).strip() == "":
                 mask = np.zeros(image.shape[:2], dtype=np.uint8)
             else:
-                mask_path = Path(mask_entry)
-                mask = _read_mask(mask_path)
+                try:
+                    mask = _read_mask(mask_entry)
+                except FileNotFoundError:
+                    if getattr(self, "_warn_missing", True):
+                        print(f"[CopyMoveDataset] Missing mask files for {mask_entry}; using zeros.")
+                        self._warn_missing = False
+                    mask = np.zeros(image.shape[:2], dtype=np.uint8)
             if mask.shape != image.shape[:2]:
                 mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
