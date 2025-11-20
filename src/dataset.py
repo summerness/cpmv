@@ -36,15 +36,19 @@ def _read_mask(mask_path) -> np.ndarray:
     masks = []
     if isinstance(mask_path, (str, Path)):
         parts = str(mask_path).split("|") if isinstance(mask_path, str) else [mask_path]
-        for part in parts:
-            if str(part).strip():
-                masks.append(_load_single(Path(part)))
     else:
-        for p in mask_path:
-            masks.append(_load_single(Path(p)))
+        parts = list(mask_path)
+
+    for part in parts:
+        part = Path(part)
+        if not str(part).strip():
+            continue
+        if not part.exists():
+            continue
+        masks.append(_load_single(Path(part)))
 
     if not masks:
-        raise FileNotFoundError("No mask paths provided")
+        raise FileNotFoundError(f"No valid mask files provided: {mask_path}")
     mask = masks[0]
     for m in masks[1:]:
         if m.shape != mask.shape:
