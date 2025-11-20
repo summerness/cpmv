@@ -316,14 +316,22 @@ def run_training(cfg: Dict) -> None:
 
             running_loss += total_loss.item()
             if log_every and (step + 1) % log_every == 0:
+                with torch.no_grad():
+                    cls_prob = torch.softmax(cls_logits_ce, dim=1)[:, 1]
+                    cls_pos_ratio = cls_targets.mean().item()
+                    cls_prob_mean = cls_prob.mean().item()
+                    cls_prob_pos = cls_prob[cls_targets.bool()].mean().item() if cls_targets.sum() > 0 else 0.0
                 logger.info(
-                    "Epoch %d | Step %d/%d | total=%.4f seg=%.4f cls=%.4f",
+                    "Epoch %d | Step %d/%d | total=%.4f seg=%.4f cls=%.4f | cls_pos=%.3f prob_pos=%.3f prob_pos_on_pos=%.3f",
                     epoch + 1,
                     step + 1,
                     len(train_loader),
                     total_loss.item(),
                     seg_loss.item(),
                     cls_loss.item(),
+                    cls_pos_ratio,
+                    cls_prob_mean,
+                    cls_prob_pos,
                 )
 
         if not step_per_batch:
@@ -332,6 +340,10 @@ def run_training(cfg: Dict) -> None:
         val_loss = 0.0
         val_f1 = 0.0
         sweep_probs = [] if sweep_thresholds and sweep_areas else None
+        val_cls_prob_sum = 0.0
+        val_cls_count = 0
+        val_cls_pos_sum = 0.0
+        val_cls_pos_count = 0
         model.eval()
         with torch.no_grad():
             for step, batch in enumerate(val_loader):
@@ -352,6 +364,13 @@ def run_training(cfg: Dict) -> None:
                 total_loss = multitask_wrapper(val_seg_loss, val_cls_loss)
                 val_loss += total_loss.item()
                 val_f1 += compute_f1(mask_logits, masks)
+                cls_prob = torch.softmax(cls_logits_ce, dim=1)[:, 1]
+                val_cls_prob_sum += cls_prob.sum().item()
+                val_cls_count += cls_prob.numel()
+                pos_idx = val_cls_targets.bool()
+                if pos_idx.any():
+                    val_cls_pos_sum += cls_prob[pos_idx].sum().item()
+                    val_cls_pos_count += pos_idx.sum().item()
                 if sweep_probs is not None:
                     sweep_probs.append((torch.sigmoid(mask_logits).detach().cpu(), masks.detach().cpu()))
 
@@ -375,6 +394,13 @@ def run_training(cfg: Dict) -> None:
         val_f1 /= max(len(val_loader), 1)
         avg_train_loss = running_loss / max(len(train_loader), 1)
         avg_val_loss = val_loss / max(len(val_loader), 1)
+        if val_cls_count > 0:
+            logger.info(
+                "Val cls stats -> pos_ratio=%.3f prob_mean=%.3f prob_on_pos=%.3f",
+                float(val_cls_pos_count) / max(len(val_loader.dataset), 1),
+                val_cls_prob_sum / val_cls_count,
+                (val_cls_pos_sum / val_cls_pos_count) if val_cls_pos_count > 0 else 0.0,
+            )
 
         if sweep_probs is not None:
             def f1_np(pred, gt):
