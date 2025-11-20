@@ -6,7 +6,7 @@ data:
   mask_col: mask_path
   category_col: category
   image_size: [512, 512]
-  num_workers: 6
+  num_workers: 8        # 可酌情再调高（受限于CPU/内存和I/O）
   fold_col: fold
   fold_id: 0
   # overfit_n: 50          # 50 张极限过拟合实验，train/val 同一子集
@@ -47,9 +47,9 @@ augmentations:
 
 train:
   epochs: 100
-  batch_size: 128
-  val_batch_size: 64
-  lr: 0.0001
+  batch_size: 32
+  val_batch_size: 32
+  lr: 5.0e-5            # batch 降低后相应调低LR，兼顾稳定性
   weight_decay: 0.0001
   min_lr: 1.0e-6
   output_dir: outputs/m1_convnext_unetpp_512_synth10x
