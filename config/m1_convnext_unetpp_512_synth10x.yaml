@@ -12,9 +12,9 @@ data:
   # overfit_n: 50          # 50 张极限过拟合实验，train/val 同一子集
   # 强人造伪造，动态扩充数据集
   use_synthetic: true
-  synthetic_prob: 1.0       # 原始样本也尽量注入
+  synthetic_prob: 0.5       # 合成副本中 50% 注入伪造，剩下保持纯净
   synthetic_times: 2        # 每个样本注入 2 块随机区域
-  synthetic_copies: 9       # 额外复制 9 份，来自 authentic 池，标签=forged
+  synthetic_copies: 3       # 控制 forged 占比，减少复制轮数
   synthetic_on_base: false  # 原始样本保持原标签，合成样本用于伪造
 
 model:
