@@ -116,10 +116,25 @@ def synthetic_copy_move(image: np.ndarray, mask: Optional[np.ndarray], p: float 
     x2 = x1 + patch_w
 
     patch_img = image[y1:y2, x1:x2].copy()
-    if mask is not None:
-        patch_mask = mask[y1:y2, x1:x2].copy()
-    else:
-        patch_mask = np.zeros((patch_h, patch_w), dtype=np.float32)
+    # generate irregular shape
+    shape = np.zeros((patch_h, patch_w), dtype=np.uint8)
+    num_shapes = random.randint(1, 3)
+    for _ in range(num_shapes):
+        pts = []
+        cx = random.randint(patch_w // 4, patch_w * 3 // 4)
+        cy = random.randint(patch_h // 4, patch_h * 3 // 4)
+        for _ in range(random.randint(3, 6)):
+            dx = random.randint(-patch_w // 4, patch_w // 4)
+            dy = random.randint(-patch_h // 4, patch_h // 4)
+            pts.append([max(0, min(patch_w - 1, cx + dx)), max(0, min(patch_h - 1, cy + dy))])
+        pts = np.array(pts, dtype=np.int32)
+        cv2.fillConvexPoly(shape, pts, 1)
+    if shape.sum() == 0:
+        cv2.circle(shape, (patch_w // 2, patch_h // 2), min(patch_h, patch_w) // 4, 1, -1)
+
+    mask_bool = shape.astype(bool)
+    patch_img = np.where(mask_bool[..., None], patch_img, 0)
+    patch_mask = shape.astype(np.float32)
 
     angle = random.uniform(-30, 30)
     scale = random.uniform(0.8, 1.2)
