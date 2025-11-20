@@ -162,7 +162,10 @@ class CopyMoveDataset(Dataset):
             "id": image_path.stem,
         }
         if self.categories is not None:
-            sample["category"] = self.categories[base_idx]
+            cat = self.categories[base_idx]
+            if is_syn_dup:
+                cat = "forged"
+            sample["category"] = cat
         return sample
 
     @staticmethod

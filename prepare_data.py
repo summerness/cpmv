@@ -37,7 +37,7 @@ def build_train_df(
     for image_path in list_images(image_dir):
         stem = image_path.stem
         rel_parts = image_path.relative_to(image_dir).parts
-        category = rel_parts[0] if len(rel_parts) > 1 else "root"
+        category = rel_parts[0] if len(rel_parts) > 1 else "authentic"
         mask_path = []
         if category.lower() != "authentic":
             mask_path = find_masks(mask_dir, stem)
