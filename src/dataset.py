@@ -106,7 +106,13 @@ class CopyMoveDataset(Dataset):
                 mask = np.zeros(image.shape[:2], dtype=np.uint8)
             else:
                 mask_path = Path(mask_entry)
-                mask = _read_mask(mask_path)
+                try:
+                    mask = _read_mask(mask_path)
+                except FileNotFoundError:
+                    if getattr(self, "_warn_missing", True):
+                        print(f"[CopyMoveDataset] Missing mask files for {mask_path}; using zeros.")
+                        self._warn_missing = False
+                    mask = np.zeros(image.shape[:2], dtype=np.uint8)
             if mask.shape != image.shape[:2]:
                 mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
