@@ -16,6 +16,7 @@ from augmentations import get_train_augmentations, get_valid_augmentations
 from dataset import CopyMoveDataset
 from utils.losses import MultiTaskLoss, SegmentationLoss
 from utils.metrics import compute_f1
+from utils.postprocess import postprocess_mask
 
 
 def seed_everything(seed: int = 42) -> None:
@@ -148,8 +149,18 @@ def run_training(cfg: Dict) -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    full_df = pd.read_csv(cfg["data"]["train_csv"])
-    train_df, val_df = split_train_val(full_df, cfg["data"], cfg.get("seed", 42))
+    data_cfg = cfg["data"]
+    full_df = pd.read_csv(data_cfg["train_csv"])
+    overfit_n = data_cfg.get("overfit_n", 0)
+    if overfit_n and overfit_n > 0:
+        train_df = full_df.sample(
+            n=overfit_n,
+            random_state=cfg.get("seed", 42),
+            replace=overfit_n > len(full_df),
+        ).reset_index(drop=True)
+        val_df = train_df.copy()
+    else:
+        train_df, val_df = split_train_val(full_df, data_cfg, cfg.get("seed", 42))
 
     save_dir = Path(cfg["train"].get("output_dir", "outputs"))
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -256,6 +267,17 @@ def run_training(cfg: Dict) -> None:
     train_cfg = cfg["train"]
     log_every = train_cfg.get("log_every", 50)
     debug_cfg = train_cfg.get("debug", {})
+    log_train_f1 = train_cfg.get("log_train_f1", False)
+    max_train_f1_batches = train_cfg.get("train_f1_batches")
+    sweep_cfg = train_cfg.get("eval_sweep", {})
+    def _expand_range(val):
+        if isinstance(val, (list, tuple)) and len(val) == 3:
+            start, stop, step = val
+            return list(np.arange(start, stop + 1e-8, step))
+        return val if isinstance(val, (list, tuple)) else []
+
+    sweep_thresholds = _expand_range(sweep_cfg.get("thresholds", []))
+    sweep_areas = _expand_range(sweep_cfg.get("areas", []))
     logger.info(
         "Start training for %d epochs | batch_size=%d | steps_per_epoch=%d",
         epochs,
@@ -307,6 +329,7 @@ def run_training(cfg: Dict) -> None:
 
         val_loss = 0.0
         val_f1 = 0.0
+        sweep_probs = [] if sweep_thresholds and sweep_areas else None
         model.eval()
         with torch.no_grad():
             for step, batch in enumerate(val_loader):
@@ -323,17 +346,66 @@ def run_training(cfg: Dict) -> None:
                 total_loss = multitask_wrapper(val_seg_loss, val_cls_loss)
                 val_loss += total_loss.item()
                 val_f1 += compute_f1(mask_logits, masks)
+                if sweep_probs is not None:
+                    sweep_probs.append((torch.sigmoid(mask_logits).detach().cpu(), masks.detach().cpu()))
+
+        train_f1 = None
+        if log_train_f1:
+            f1_accum, count = 0.0, 0
+            model.eval()
+            with torch.no_grad():
+                for b_idx, batch in enumerate(train_loader):
+                    if max_train_f1_batches is not None and b_idx >= max_train_f1_batches:
+                        break
+                    imgs = batch["image"].to(device)
+                    msks = batch["mask"].to(device)
+                    if msks.ndim == 3:
+                        msks = msks.unsqueeze(1)
+                    logits, _ = model(imgs)
+                    f1_accum += compute_f1(logits, msks)
+                    count += 1
+            train_f1 = f1_accum / max(count, 1)
 
         val_f1 /= max(len(val_loader), 1)
         avg_train_loss = running_loss / max(len(train_loader), 1)
         avg_val_loss = val_loss / max(len(val_loader), 1)
 
+        if sweep_probs is not None:
+            def f1_np(pred, gt):
+                pred = pred.astype(np.uint8)
+                gt = gt.astype(np.uint8)
+                tp = (pred & gt).sum()
+                fp = (pred & (1 - gt)).sum()
+                fn = ((1 - pred) & gt).sum()
+                precision = tp / (tp + fp + 1e-7)
+                recall = tp / (tp + fn + 1e-7)
+                return 2 * precision * recall / (precision + recall + 1e-7)
+
+            best_combo = None
+            best_score = -1
+            for thr in sweep_thresholds:
+                for area in sweep_areas:
+                    scores = []
+                    for probs, msks in sweep_probs:
+                        prob_np = probs.numpy()
+                        msk_np = msks.numpy()
+                        for b in range(prob_np.shape[0]):
+                            mask_pp = postprocess_mask(prob_np[b, 0], thr, area)
+                            scores.append(f1_np(mask_pp, (msk_np[b, 0] > 0.5).astype(np.uint8)))
+                    score = float(np.mean(scores)) if scores else 0.0
+                    if score > best_score:
+                        best_score = score
+                        best_combo = (thr, area)
+            if best_combo is not None:
+                logger.info("Sweep best -> thr=%.3f area=%d f1=%.4f", best_combo[0], best_combo[1], best_score)
+
         logger.info(
-            "Epoch %d complete | train_loss=%.4f val_loss=%.4f val_f1=%.4f",
+            "Epoch %d complete | train_loss=%.4f val_loss=%.4f val_f1=%.4f%s",
             epoch + 1,
             avg_train_loss,
             avg_val_loss,
             val_f1,
+            "" if train_f1 is None else f" train_f1={train_f1:.4f}",
         )
 
         if val_f1 > best_f1:
