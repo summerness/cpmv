@@ -450,7 +450,23 @@ def run_training(cfg: Dict) -> None:
                         logits = out[0]
                     else:
                         logits = out
-                    f1_accum += compute_f1(logits, msks)
+                    # 使用与验证相同的后处理阈值（若 sweep 过则用 best_sweep_combo，否则默认 0.5，面积不滤）
+                    thr = best_sweep_combo[0] if (best_sweep_combo and best_sweep_combo[0] is not None) else 0.5
+                    logits_np = torch.sigmoid(logits).detach().cpu().numpy()
+                    masks_np = msks.detach().cpu().numpy()
+                    # 按批求 F1
+                    batch_scores = []
+                    for b in range(logits_np.shape[0]):
+                        pred = (logits_np[b, 0] > thr).astype(np.uint8)
+                        gt = (masks_np[b, 0] > 0.5).astype(np.uint8)
+                        tp = (pred & gt).sum()
+                        fp = (pred & (1 - gt)).sum()
+                        fn = ((1 - pred) & gt).sum()
+                        precision = tp / (tp + fp + 1e-7)
+                        recall = tp / (tp + fn + 1e-7)
+                        f1 = 2 * precision * recall / (precision + recall + 1e-7)
+                        batch_scores.append(f1)
+                    f1_accum += float(np.mean(batch_scores)) if batch_scores else 0.0
                     count += 1
             train_f1 = f1_accum / max(count, 1)
 
