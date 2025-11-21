@@ -336,16 +336,9 @@ def run_training(cfg: Dict) -> None:
                 seg_loss = seg_loss_fn(mask_logits, masks)
                 if sim_loss_fn is not None:
                     feat_for_sim = corr_feat if corr_feat is not None else mask_logits
-                    # 确保传入的特征有 4 维 [B,C,H,W]；如果是 logits，扩展通道
-                    if feat_for_sim.ndim == 3:
+                    if feat_for_sim.ndim == 3:  # [B,H,W]
                         feat_for_sim = feat_for_sim.unsqueeze(1)
-                    if mask_logits.ndim == 3:
-                        _mask_logits = mask_logits.unsqueeze(1)
-                    else:
-                        _mask_logits = mask_logits
-                    # 对齐分辨率
-                    if _mask_logits.shape[-2:] != feat_for_sim.shape[-2:]:
-                        _mask_logits = F.interpolate(_mask_logits, size=feat_for_sim.shape[-2:], mode="bilinear", align_corners=False)
+                    _mask_logits = mask_logits if mask_logits.ndim == 4 else mask_logits.unsqueeze(1)
                     sim_loss = sim_loss_fn(feat_for_sim, _mask_logits)
                     seg_loss = seg_loss + sim_loss_weight * sim_loss
                 cls_loss = F.cross_entropy(cls_logits_ce, cls_targets.long().view(-1))

@@ -85,18 +85,19 @@ class SimilarityConsistencyLoss(nn.Module):
         logits: [B, 1, H, W] mask logits
         """
         b, c, h, w = feats.shape
+        # 若 logits 分辨率不同，先对齐到 feats 分辨率
+        if logits.shape[-2:] != (h, w):
+            logits = F.interpolate(logits, size=(h, w), mode="bilinear", align_corners=False)
         n = h * w
         feat_flat = feats.view(b, c, n)
         feat_norm = F.normalize(feat_flat, dim=1)  # [B, C, N]
         sim = torch.bmm(feat_norm.transpose(1, 2), feat_norm)  # [B, N, N]
         k = min(self.topk, n)
         _, idx = torch.topk(sim, k=k, dim=-1)
-        # gather logits
         prob = torch.sigmoid(logits)
         prob_flat = prob.view(b, 1, n)  # [B,1,N]
         prob_expand = prob_flat.expand(-1, n, -1)  # [B,N,N]
         gathered = torch.gather(prob_expand, 2, idx)  # [B, N, k]
-        # anchor -> [B,N,1] to match gathered last dim
         anchor = prob_flat.transpose(1, 2)  # [B,N,1]
         anchor = anchor.expand(-1, -1, k)
         loss = (anchor - gathered).abs().mean()
