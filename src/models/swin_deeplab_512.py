@@ -112,6 +112,11 @@ class SwinDeepLab512(nn.Module):
         features = self.encoder(x)
         high = features[-1]
         low = features[self.low_level_idx]
+        # 确保为 NCHW
+        if high.ndim == 4 and high.shape[1] < high.shape[-1]:
+            high = high.permute(0, 3, 1, 2).contiguous()
+        if low.ndim == 4 and low.shape[1] < low.shape[-1]:
+            low = low.permute(0, 3, 1, 2).contiguous()
         corr_feat = None
         if self.use_self_corr:
             mid = features[-2]
