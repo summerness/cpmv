@@ -109,10 +109,9 @@ class ConvNeXtUNetPP512(nn.Module):
             # 在 1/16 特征上做自相关增强
             self.self_corr = SelfCorrelationBlock(encoder_channels[2], reduction=4, topk=self_corr_topk)
             self.corr_proj = nn.Conv2d(encoder_channels[2], decoder_channels[0], kernel_size=1, bias=False)
+            self.corr_fuse = nn.Conv2d(decoder_channels[0] * 2, decoder_channels[0], kernel_size=3, padding=1, bias=False)
         self.decoder = UNetPPDecoder(encoder_channels, decoder_channels)
         seg_in_ch = decoder_channels[0]
-        if self.use_self_corr:
-            seg_in_ch += decoder_channels[0]
         self.seg_head = nn.Sequential(
             nn.Conv2d(seg_in_ch, 64, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(64),
@@ -139,7 +138,8 @@ class ConvNeXtUNetPP512(nn.Module):
         decoder_out = self.decoder(features)
         if corr_feat is not None:
             corr_up = F.interpolate(corr_feat, size=decoder_out.shape[-2:], mode="bilinear", align_corners=False)
-            decoder_out = torch.cat([decoder_out, corr_up], dim=1)
+            att = torch.sigmoid(self.corr_fuse(torch.cat([decoder_out, corr_up], dim=1)))
+            decoder_out = decoder_out * att + corr_up
 
         mask_logits = self.seg_head(decoder_out)
         mask_logits = F.interpolate(mask_logits, size=x.shape[-2:], mode="bilinear", align_corners=False)

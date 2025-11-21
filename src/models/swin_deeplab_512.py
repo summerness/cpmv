@@ -85,15 +85,14 @@ class SwinDeepLab512(nn.Module):
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
         )
-        dec_in_ch = 256 + 64
         self.use_self_corr = use_self_corr
         if self.use_self_corr:
             # 在较深层特征上做自相关（取倒数第二层，通常 1/16）
             self.self_corr = SelfCorrelationBlock(channels[-2], reduction=4, topk=self_corr_topk)
             self.corr_proj = nn.Conv2d(channels[-2], 256, kernel_size=1, bias=False)
-            dec_in_ch += 256
+            self.corr_fuse = nn.Conv2d(256 + 64, 256, kernel_size=3, padding=1, bias=False)
         self.decoder = nn.Sequential(
-            nn.Conv2d(dec_in_ch, 256, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(256 + 64, 256, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
@@ -121,11 +120,11 @@ class SwinDeepLab512(nn.Module):
         cls_logit = self.cls_head(aspp_out).squeeze(-1)
         upsampled = F.interpolate(aspp_out, size=low.shape[-2:], mode="bilinear", align_corners=False)
         low_feat = self.low_proj(low)
+        decoder_in = torch.cat([upsampled, low_feat], dim=1)
         if corr_feat is not None:
             corr_up = F.interpolate(corr_feat, size=low.shape[-2:], mode="bilinear", align_corners=False)
-            decoder_in = torch.cat([upsampled, low_feat, corr_up], dim=1)
-        else:
-            decoder_in = torch.cat([upsampled, low_feat], dim=1)
+            att = torch.sigmoid(self.corr_fuse(torch.cat([upsampled, low_feat], dim=1)))
+            decoder_in = decoder_in * att + torch.cat([corr_up, low_feat], dim=1) if corr_up.shape[1] == decoder_in.shape[1] else decoder_in * att + decoder_in
         decoder_out = self.decoder(decoder_in)
         mask_logits = self.mask_head(decoder_out)
         mask_logits = F.interpolate(mask_logits, size=x.shape[-2:], mode="bilinear", align_corners=False)
