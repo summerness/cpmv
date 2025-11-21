@@ -65,7 +65,7 @@ class SwinDeepLab512(nn.Module):
         self,
         in_channels: int = 3,
         num_classes: int = 1,
-        backbone: str = "swin_tiny_patch4_window7_224",
+        backbone: str = "timm/swin_base_patch4_window7_224.ms_in22k_ft_in1k",
         low_level_idx: int = 0,
         use_self_corr: bool = True,
         self_corr_window: int = 7,
