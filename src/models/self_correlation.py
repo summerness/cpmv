@@ -15,6 +15,8 @@ class SelfCorrelationBlock(nn.Module):
 
     def forward(self, x):
         identity = x
+        if x.ndim == 4 and x.shape[1] < x.shape[-1]:
+            x = x.permute(0, 3, 1, 2).contiguous()
         b, c, h, w = x.shape
 
         # reduce dimension
@@ -40,4 +42,3 @@ class SelfCorrelationBlock(nn.Module):
         enhanced = self.proj(corr)
 
         return identity + enhanced
-
