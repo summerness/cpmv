@@ -441,7 +441,11 @@ def run_training(cfg: Dict) -> None:
                     msks = batch["mask"].to(device)
                     if msks.ndim == 3:
                         msks = msks.unsqueeze(1)
-                    logits, _ = model(imgs)
+                    out = model(imgs)
+                    if isinstance(out, (tuple, list)):
+                        logits = out[0]
+                    else:
+                        logits = out
                     f1_accum += compute_f1(logits, msks)
                     count += 1
             train_f1 = f1_accum / max(count, 1)
