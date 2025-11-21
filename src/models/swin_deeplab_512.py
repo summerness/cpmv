@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.utils import safe_timm_create
-from models.self_correlation import SelfCorrelationBlock
+from models.self_correlation import SelfCorrelationBlock, SelfCorrelationProject
 
 
 class ASPP(nn.Module):
@@ -89,7 +89,7 @@ class SwinDeepLab512(nn.Module):
         self.use_self_corr = use_self_corr
         if self.use_self_corr:
             # 在较深层特征上做自相关（取倒数第二层，通常 1/16）
-            self.self_corr = SelfCorrelationBlock(channels[-2], reduction=4, window=self_corr_window)
+            self.self_corr = SelfCorrelationProject(channels[-2], out_channels=channels[-2], reduction=4, window=self_corr_window)
             self.corr_proj = nn.Conv2d(channels[-2], 256, kernel_size=1, bias=False)
             self.corr_fuse = nn.Conv2d(256 + 64, 256, kernel_size=1, bias=False)
         self.decoder = nn.Sequential(
@@ -115,7 +115,6 @@ class SwinDeepLab512(nn.Module):
         corr_feat = None
         if self.use_self_corr:
             mid = features[-2]
-            # 若为通道末尾格式，转换为 NCHW
             if mid.ndim == 4 and mid.shape[1] < mid.shape[-1]:
                 mid = mid.permute(0, 3, 1, 2).contiguous()
             mid = self.self_corr(mid)
