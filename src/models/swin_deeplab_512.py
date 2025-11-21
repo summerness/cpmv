@@ -91,7 +91,8 @@ class SwinDeepLab512(nn.Module):
             # 在较深层特征上做自相关（取倒数第二层，通常 1/16）
             self.self_corr = SelfCorrelationProject(channels[-2], out_channels=channels[-2], reduction=4, window=self_corr_window)
             self.corr_proj = nn.Conv2d(channels[-2], 256, kernel_size=1, bias=False)
-            self.corr_fuse = nn.Conv2d(256 + 64, 256, kernel_size=1, bias=False)
+            # attention 对齐 decoder_in 的通道数 (256+64=320)
+            self.corr_fuse = nn.Conv2d(256 + 64, 256 + 64, kernel_size=1, bias=False)
         self.decoder = nn.Sequential(
             nn.Conv2d(256 + 64, 256, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(256),
