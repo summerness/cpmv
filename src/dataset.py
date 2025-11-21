@@ -231,7 +231,7 @@ class CopyMoveDataset(Dataset):
         self.augment = augment
         self.use_synthetic = use_synthetic
         self.synthetic_prob = synthetic_prob
-        self.synthetic_times = max(1, synthetic_times)
+        self.synthetic_times = max(1, synthetic_times)  # 最大次数
         self.synthetic_copies = max(0, synthetic_copies)
         self.synthetic_on_base = synthetic_on_base
         self.base_len = len(self.image_paths)
@@ -290,7 +290,9 @@ class CopyMoveDataset(Dataset):
         # 合成伪造：可以作用于合成副本或原始样本（取决于配置）
         def apply_synthetic(img, msk) -> tuple[np.ndarray, np.ndarray]:
             forged_img, forged_m = img, msk
-            for _ in range(self.synthetic_times):
+            max_times = self.synthetic_times
+            times = random.randint(1, max_times) if max_times > 1 else 1
+            for _ in range(times):
                 forged_img, forged_m = synthetic_forgery(
                     forged_img,
                     forged_m if forged_m is not None else np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8),
