@@ -12,7 +12,7 @@ data:
   exclude_sources: ["supplemental"]  # 训练时排除补充集
   # overfit_n: 50          # 50 张极限过拟合实验，train/val 同一子集
   # 强人造伪造，动态扩充数据集
-  use_synthetic: true      # 关闭合成
+  use_synthetic: false      # 关闭合成
   synthetic_prob: 0.0 #每次采样时触发合成的概率（0 表示不做，1 表示必做）
   synthetic_times: 5 #synthetic_times: 一张图上连续做几次合成（可叠加多块伪造）。
   synthetic_copies: 1  #除原始数据外，额外复制多少份来自 authentic 池的样本作为合成副本（>0 会扩充数据集；这些副本会尝试合成伪造）

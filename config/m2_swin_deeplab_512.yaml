@@ -69,6 +69,5 @@ train:
     alpha: 0.7
     beta: 0.3
   sim_loss:
-    weight: 0.04
+    weight: 0.03   # 对齐 M1 风格，默认稍轻，可在 0.02~0.1 间调整
     topk: 8
-    patch: 7
