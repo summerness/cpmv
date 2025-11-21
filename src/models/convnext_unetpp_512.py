@@ -23,6 +23,24 @@ class ConvBlock(nn.Module):
         return self.block(x)
 
 
+class BoundaryRefine(nn.Module):
+    """Lightweight boundary refinement to sharpen edges."""
+
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        self.refine = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.refine(x)
+
+
 class UNetPPDecoder(nn.Module):
     def __init__(self, encoder_channels: Tuple[int, ...], decoder_channels: Tuple[int, int, int, int]) -> None:
         super().__init__()
@@ -71,7 +89,7 @@ class ConvNeXtUNetPP512(nn.Module):
         in_channels: int = 3,
         num_classes: int = 1,
         backbone: str = "convnext_tiny",
-        decoder_channels: Tuple[int, int, int, int] = (64, 128, 256, 512),
+        decoder_channels: Tuple[int, int, int, int] = (128, 192, 256, 320),
         cls_dropout: float = 0.2,
     ) -> None:
         super().__init__()
@@ -88,6 +106,7 @@ class ConvNeXtUNetPP512(nn.Module):
             nn.Conv2d(decoder_channels[0], 64, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
+            BoundaryRefine(64),
             nn.Conv2d(64, num_classes, kernel_size=1),
         )
         self.cls_head = nn.Sequential(

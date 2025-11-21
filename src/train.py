@@ -246,6 +246,11 @@ def run_training(cfg: Dict) -> None:
     if torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
 
+    seg_loss_cfg = cfg["train"].get("seg_loss", {})
+    seg_loss_fn = SegmentationLoss(**seg_loss_cfg)
+    cls_weight = cfg["train"].get("cls_weight", 0.2)
+    multitask_wrapper = MultiTaskLoss(cls_weight=cls_weight if hasattr(MultiTaskLoss, "__init__") else cls_weight)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["train"].get("lr", 1e-4), weight_decay=cfg["train"].get("weight_decay", 1e-4))
     scheduler_cfg = cfg["train"].get("scheduler", {"name": "cosine"})
     scheduler_name = scheduler_cfg.get("name", "cosine").lower()
@@ -270,7 +275,7 @@ def run_training(cfg: Dict) -> None:
         step_per_batch = False
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"].get("use_amp", True) and device.type == "cuda")
-    multitask_wrapper = MultiTaskLoss()
+    # multitask_wrapper 已在上面初始化
 
     best_f1 = 0.0
     train_cfg = cfg["train"]
@@ -317,7 +322,7 @@ def run_training(cfg: Dict) -> None:
                     cls_logits_ce = torch.cat([-cls_logits, cls_logits], dim=1)
                 else:
                     cls_logits_ce = cls_logits
-                seg_loss = SegmentationLoss()(mask_logits, masks)
+                seg_loss = seg_loss_fn(mask_logits, masks)
                 cls_loss = F.cross_entropy(cls_logits_ce, cls_targets.long().view(-1))
                 total_loss = multitask_wrapper(seg_loss, cls_loss)
             scaler.scale(total_loss).backward()
@@ -419,6 +424,7 @@ def run_training(cfg: Dict) -> None:
             train_f1 = f1_accum / max(count, 1)
 
         val_f1 /= max(len(val_loader), 1)
+        val_f1_base = val_f1
         avg_train_loss = running_loss / max(len(train_loader), 1)
         avg_val_loss = val_loss / max(len(val_loader), 1)
         if val_cls_count > 0:
@@ -457,6 +463,12 @@ def run_training(cfg: Dict) -> None:
             if best_combo is not None:
                 best_sweep_combo = best_combo
                 logger.info("Sweep best -> thr=%.3f area=%d f1=%.4f", best_combo[0], best_combo[1], best_score)
+                # 使用 sweep 最优得分作为验证参考
+                val_f1 = best_score
+            else:
+                val_f1 = val_f1_base
+        else:
+            val_f1 = val_f1_base
 
         # 保存验证可视化结果（阈值优先用 sweep 最优）
         if viz_count > 0 and val_visuals:
@@ -483,11 +495,12 @@ def run_training(cfg: Dict) -> None:
                 cv2.imwrite(str(out_path), cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
 
         logger.info(
-            "Epoch %d complete | train_loss=%.4f val_loss=%.4f val_f1=%.4f%s",
+            "Epoch %d complete | train_loss=%.4f val_loss=%.4f val_f1=%.4f (base=%.4f)%s",
             epoch + 1,
             avg_train_loss,
             avg_val_loss,
             val_f1,
+            val_f1_base,
             "" if train_f1 is None else f" train_f1={train_f1:.4f}",
         )
 

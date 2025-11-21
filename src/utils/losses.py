@@ -20,14 +20,54 @@ class DiceLoss(nn.Module):
         return 1.0 - dice.mean()
 
 
-class SegmentationLoss(nn.Module):
-    def __init__(self) -> None:
+class TverskyLoss(nn.Module):
+    def __init__(self, alpha: float = 0.7, beta: float = 0.3, smooth: float = 1e-6) -> None:
         super().__init__()
-        self.bce = nn.BCEWithLogitsLoss()
-        self.dice = DiceLoss()
+        self.alpha = alpha
+        self.beta = beta
+        self.smooth = smooth
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        return self.bce(logits, targets) + self.dice(logits, targets)
+        probs = torch.sigmoid(logits)
+        targets = targets.float()
+        dims = tuple(range(1, probs.ndim))
+        tp = torch.sum(probs * targets, dim=dims)
+        fp = torch.sum(probs * (1 - targets), dim=dims)
+        fn = torch.sum((1 - probs) * targets, dim=dims)
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
+        return 1.0 - tversky.mean()
+
+
+class FocalTverskyLoss(nn.Module):
+    def __init__(self, alpha: float = 0.7, beta: float = 0.3, gamma: float = 0.75, smooth: float = 1e-6) -> None:
+        super().__init__()
+        self.tversky = TverskyLoss(alpha=alpha, beta=beta, smooth=smooth)
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        tversky_loss = self.tversky(logits, targets)
+        return torch.pow(tversky_loss, 1.0 / self.gamma)
+
+
+class SegmentationLoss(nn.Module):
+    def __init__(self, name: str = "dice", alpha: float = 0.7, beta: float = 0.3, gamma: float = 0.75) -> None:
+        """
+        name: one of ["dice", "tversky", "focal_tversky"]
+        """
+        super().__init__()
+        self.bce = nn.BCEWithLogitsLoss()
+        name = name.lower()
+        if name == "dice":
+            self.aux = DiceLoss()
+        elif name == "tversky":
+            self.aux = TverskyLoss(alpha=alpha, beta=beta)
+        elif name == "focal_tversky":
+            self.aux = FocalTverskyLoss(alpha=alpha, beta=beta, gamma=gamma)
+        else:
+            raise ValueError(f"Unknown seg loss: {name}")
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        return self.bce(logits, targets) + self.aux(logits, targets)
 
 
 class MultiTaskLoss(nn.Module):
