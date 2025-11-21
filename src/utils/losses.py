@@ -94,10 +94,11 @@ class SimilarityConsistencyLoss(nn.Module):
         # gather logits
         prob = torch.sigmoid(logits)
         prob_flat = prob.view(b, 1, n)  # [B,1,N]
-        anchor = prob_flat.transpose(1, 2)  # [B,N,1]
-        # expand prob_flat to [B,N,N]
-        prob_expand = prob_flat.expand(-1, n, -1)
+        prob_expand = prob_flat.expand(-1, n, -1)  # [B,N,N]
         gathered = torch.gather(prob_expand, 2, idx)  # [B, N, k]
+        # anchor -> [B,N,1] to match gathered last dim
+        anchor = prob_flat.transpose(1, 2)  # [B,N,1]
+        anchor = anchor.expand(-1, -1, k)
         loss = (anchor - gathered).abs().mean()
         return loss
 
