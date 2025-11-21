@@ -68,7 +68,7 @@ class SwinDeepLab512(nn.Module):
         backbone: str = "swin_tiny_patch4_window7_224",
         low_level_idx: int = 0,
         use_self_corr: bool = True,
-        self_corr_topk: int = 8,
+        self_corr_window: int = 7,
     ) -> None:
         super().__init__()
         self.encoder = safe_timm_create(
@@ -88,7 +88,7 @@ class SwinDeepLab512(nn.Module):
         self.use_self_corr = use_self_corr
         if self.use_self_corr:
             # 在较深层特征上做自相关（取倒数第二层，通常 1/16）
-            self.self_corr = SelfCorrelationBlock(channels[-2], reduction=4, topk=self_corr_topk)
+            self.self_corr = SelfCorrelationBlock(channels[-2], reduction=4, window=self_corr_window)
             self.corr_proj = nn.Conv2d(channels[-2], 256, kernel_size=1, bias=False)
             self.corr_fuse = nn.Conv2d(256 + 64, 256, kernel_size=3, padding=1, bias=False)
         self.decoder = nn.Sequential(

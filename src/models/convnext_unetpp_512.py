@@ -93,7 +93,7 @@ class ConvNeXtUNetPP512(nn.Module):
         decoder_channels: Tuple[int, int, int, int] = (128, 192, 256, 320),
         cls_dropout: float = 0.2,
         use_self_corr: bool = True,
-        self_corr_topk: int = 16,
+        self_corr_window: int = 7,
     ) -> None:
         super().__init__()
         self.encoder = safe_timm_create(
@@ -107,7 +107,7 @@ class ConvNeXtUNetPP512(nn.Module):
         self.use_self_corr = use_self_corr
         if self.use_self_corr:
             # 在 1/16 特征上做自相关增强
-            self.self_corr = SelfCorrelationBlock(encoder_channels[2], reduction=4, topk=self_corr_topk)
+            self.self_corr = SelfCorrelationBlock(encoder_channels[2], reduction=4, window=self_corr_window)
             self.corr_proj = nn.Conv2d(encoder_channels[2], decoder_channels[0], kernel_size=1, bias=False)
             self.corr_fuse = nn.Conv2d(decoder_channels[0] * 2, decoder_channels[0], kernel_size=3, padding=1, bias=False)
         self.decoder = UNetPPDecoder(encoder_channels, decoder_channels)

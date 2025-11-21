@@ -47,10 +47,10 @@ class CMSegSwin512(nn.Module):
         self.proj16 = nn.Conv2d(channels[1], 256, kernel_size=1, bias=False)
         self.proj32 = nn.Conv2d(channels[2], 256, kernel_size=1, bias=False)
 
-        self.self_corr = SelfCorrelationBlock(256, reduction=4, topk=16)
+        self.self_corr = SelfCorrelationBlock(256, reduction=4, window=7)
         self.enable_aux = enable_aux_corr
         if enable_aux_corr:
-            self.aux_corr = SelfCorrelationBlock(192, reduction=4, topk=8)
+            self.aux_corr = SelfCorrelationBlock(192, reduction=4, window=5)
 
         self.up32 = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.up16 = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
