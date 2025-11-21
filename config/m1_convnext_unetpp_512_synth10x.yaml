@@ -55,8 +55,8 @@ augmentations:
 
 train:
   epochs: 100
-  batch_size: 32
-  val_batch_size: 32
+  batch_size: 16
+  val_batch_size: 8
   lr: 5.0e-5            # batch 降低后相应调低LR，兼顾稳定性
   weight_decay: 0.0003  # 适度加大L2正则
   min_lr: 1.0e-6
@@ -84,5 +84,5 @@ train:
     beta: 0.3
   # 可选：相似像素一致性 loss
   sim_loss:
-    weight: 0.05   # 建议 0.02~0.1 之间尝试
+    weight: 0.03   # 建议 0.02~0.1 之间尝试
     topk: 8
