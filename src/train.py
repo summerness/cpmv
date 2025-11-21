@@ -281,10 +281,10 @@ def run_training(cfg: Dict) -> None:
     scaler = torch.cuda.amp.GradScaler(enabled=cfg["train"].get("use_amp", True) and device.type == "cuda")
     # multitask_wrapper 已在上面初始化
 
+    train_cfg = cfg["train"]
     best_f1 = 0.0
     best_epoch = 0
     patience = train_cfg.get("early_stopping_patience", 0)
-    train_cfg = cfg["train"]
     log_every = train_cfg.get("log_every", 50)
     debug_cfg = train_cfg.get("debug", {})
     log_train_f1 = train_cfg.get("log_train_f1", False)
