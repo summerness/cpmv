@@ -14,9 +14,9 @@ class SelfCorrelationBlock(nn.Module):
         self.window = window  # local window
 
     def forward(self, x):
-        identity = x
         if x.ndim == 4 and x.shape[1] < x.shape[-1]:
-            x = x.permute(0, 3, 1, 2).contiguous()
+            x = x.permute(0, 3, 1, 2).contiguous()  # NHWC -> NCHW
+        identity = x
         b, c, h, w = x.shape
 
         # reduce dimension

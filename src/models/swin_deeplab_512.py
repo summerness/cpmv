@@ -114,7 +114,11 @@ class SwinDeepLab512(nn.Module):
         low = features[self.low_level_idx]
         corr_feat = None
         if self.use_self_corr:
-            mid = self.self_corr(features[-2])
+            mid = features[-2]
+            # 若为通道末尾格式，转换为 NCHW
+            if mid.ndim == 4 and mid.shape[1] < mid.shape[-1]:
+                mid = mid.permute(0, 3, 1, 2).contiguous()
+            mid = self.self_corr(mid)
             corr_feat = self.corr_proj(mid)
 
         aspp_out = self.aspp(high)

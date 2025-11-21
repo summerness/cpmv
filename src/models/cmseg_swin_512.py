@@ -76,6 +76,9 @@ class CMSegSwin512(nn.Module):
         feat16 = self.proj16(feats[1])
         feat32 = self.proj32(feats[2])
 
+        # 保证特征为 NCHW
+        if feat16.ndim == 4 and feat16.shape[1] < feat16.shape[-1]:
+            feat16 = feat16.permute(0, 3, 1, 2).contiguous()
         enhanced16 = self.self_corr(feat16)
         aux_feat = self.aux_corr(feat8) if self.enable_aux else None
         cls_logit = self.cls_head(enhanced16).squeeze(-1)
