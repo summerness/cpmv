@@ -89,12 +89,15 @@ class SimilarityConsistencyLoss(nn.Module):
         feat_flat = feats.view(b, c, n)
         feat_norm = F.normalize(feat_flat, dim=1)  # [B, C, N]
         sim = torch.bmm(feat_norm.transpose(1, 2), feat_norm)  # [B, N, N]
-        _, idx = torch.topk(sim, k=min(self.topk, n), dim=-1)
+        k = min(self.topk, n)
+        _, idx = torch.topk(sim, k=k, dim=-1)
         # gather logits
-        logit_flat = logits.view(b, 1, n)
-        prob = torch.sigmoid(logit_flat)
-        gathered = torch.gather(prob.expand(-1, n, -1), 2, idx)  # [B, N, topk]
-        anchor = prob.transpose(1, 2)  # [B, N, 1]
+        prob = torch.sigmoid(logits)
+        prob_flat = prob.view(b, 1, n)  # [B,1,N]
+        anchor = prob_flat.transpose(1, 2)  # [B,N,1]
+        # expand prob_flat to [B,N,N]
+        prob_expand = prob_flat.expand(-1, n, -1)
+        gathered = torch.gather(prob_expand, 2, idx)  # [B, N, k]
         loss = (anchor - gathered).abs().mean()
         return loss
 
