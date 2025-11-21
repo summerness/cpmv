@@ -70,6 +70,37 @@ class SegmentationLoss(nn.Module):
         return self.bce(logits, targets) + self.aux(logits, targets)
 
 
+class SimilarityConsistencyLoss(nn.Module):
+    """
+    Encourages high-similarity feature pairs to have consistent mask predictions.
+    """
+
+    def __init__(self, topk: int = 8) -> None:
+        super().__init__()
+        self.topk = topk
+
+    def forward(self, feats: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
+        """
+        feats: [B, C, H, W] feature map
+        logits: [B, 1, H, W] mask logits
+        """
+        b, c, h, w = feats.shape
+        n = h * w
+        feat_flat = feats.view(b, c, n)
+        feat_norm = F.normalize(feat_flat, dim=1)  # [B, C, N]
+        sim = torch.bmm(feat_norm.transpose(1, 2), feat_norm)  # [B, N, N]
+        vals, idx = torch.topk(sim, k=min(self.topk, n), dim=-1)
+        # gather logits
+        logit_flat = logits.view(b, 1, n)
+        # predicted probabilities
+        prob = torch.sigmoid(logit_flat)
+        gathered = torch.gather(prob.expand(-1, n, -1), 2, idx)  # [B, N, topk]
+        anchor = prob.transpose(1, 2)  # [B, N, 1]
+        # L1 consistency
+        loss = (anchor - gathered).abs().mean()
+        return loss
+
+
 class MultiTaskLoss(nn.Module):
     """Simple weighted sum without可训练权重."""
 

@@ -91,4 +91,4 @@ class CMSegSwin512(nn.Module):
 
         mask_logits = self.head(dec8)
         mask_logits = F.interpolate(mask_logits, size=x.shape[-2:], mode="bilinear", align_corners=False)
-        return mask_logits, cls_logit
+        return mask_logits, cls_logit, enhanced16

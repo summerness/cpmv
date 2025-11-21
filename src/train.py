@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 from augmentations import get_train_augmentations, get_valid_augmentations
 from dataset import CopyMoveDataset
-from utils.losses import MultiTaskLoss, SegmentationLoss
+from utils.losses import MultiTaskLoss, SegmentationLoss, SimilarityConsistencyLoss
 from utils.metrics import compute_f1
 from utils.postprocess import postprocess_mask
 
@@ -250,6 +250,10 @@ def run_training(cfg: Dict) -> None:
     seg_loss_fn = SegmentationLoss(**seg_loss_cfg)
     cls_weight = cfg["train"].get("cls_weight", 0.2)
     multitask_wrapper = MultiTaskLoss(cls_weight=cls_weight if hasattr(MultiTaskLoss, "__init__") else cls_weight)
+    sim_loss_cfg = cfg["train"].get("sim_loss", {})
+    sim_loss_weight = float(sim_loss_cfg.get("weight", 0.0))
+    sim_loss_topk = int(sim_loss_cfg.get("topk", 8))
+    sim_loss_fn = SimilarityConsistencyLoss(topk=sim_loss_topk) if sim_loss_weight > 0 else None
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["train"].get("lr", 1e-4), weight_decay=cfg["train"].get("weight_decay", 1e-4))
     scheduler_cfg = cfg["train"].get("scheduler", {"name": "cosine"})
@@ -278,6 +282,8 @@ def run_training(cfg: Dict) -> None:
     # multitask_wrapper 已在上面初始化
 
     best_f1 = 0.0
+    best_epoch = 0
+    patience = train_cfg.get("early_stopping_patience", 0)
     train_cfg = cfg["train"]
     log_every = train_cfg.get("log_every", 50)
     debug_cfg = train_cfg.get("debug", {})
@@ -314,7 +320,12 @@ def run_training(cfg: Dict) -> None:
 
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
-                mask_logits, cls_logits = model(images)
+                out = model(images)
+                if isinstance(out, (tuple, list)) and len(out) == 3:
+                    mask_logits, cls_logits, corr_feat = out
+                else:
+                    mask_logits, cls_logits = out
+                    corr_feat = None
                 # 统一 cls logits 形状为 [B, 2] 用于 CE
                 if cls_logits.dim() == 1:
                     cls_logits = cls_logits.unsqueeze(1)
@@ -323,6 +334,10 @@ def run_training(cfg: Dict) -> None:
                 else:
                     cls_logits_ce = cls_logits
                 seg_loss = seg_loss_fn(mask_logits, masks)
+                if sim_loss_fn is not None:
+                    feat_for_sim = corr_feat if corr_feat is not None else mask_logits
+                    sim_loss = sim_loss_fn(feat_for_sim, mask_logits)
+                    seg_loss = seg_loss + sim_loss_weight * sim_loss
                 cls_loss = F.cross_entropy(cls_logits_ce, cls_targets.long().view(-1))
                 total_loss = multitask_wrapper(seg_loss, cls_loss)
             scaler.scale(total_loss).backward()
@@ -370,7 +385,12 @@ def run_training(cfg: Dict) -> None:
                 masks = batch["mask"].to(device)
                 if masks.ndim == 3:
                     masks = masks.unsqueeze(1)
-                mask_logits, cls_logits = model(images)
+                out = model(images)
+                if isinstance(out, (tuple, list)) and len(out) == 3:
+                    mask_logits, cls_logits, corr_feat = out
+                else:
+                    mask_logits, cls_logits = out
+                    corr_feat = None
                 val_seg_loss = SegmentationLoss()(mask_logits, masks)
                 if cls_logits.dim() == 1:
                     cls_logits = cls_logits.unsqueeze(1)
@@ -506,6 +526,7 @@ def run_training(cfg: Dict) -> None:
 
         if val_f1 > best_f1:
             best_f1 = val_f1
+            best_epoch = epoch + 1
             ckpt = {
                 "model": model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(),
                 "epoch": epoch + 1,
@@ -514,6 +535,9 @@ def run_training(cfg: Dict) -> None:
             }
             torch.save(ckpt, save_dir / "best.ckpt")
             logger.info("Saved new best checkpoint with F1 %.4f", best_f1)
+        elif patience and (epoch + 1 - best_epoch) >= patience:
+            logger.info("Early stopping triggered at epoch %d (best epoch %d, best_f1=%.4f)", epoch + 1, best_epoch, best_f1)
+            break
 
 
 if __name__ == "__main__":
