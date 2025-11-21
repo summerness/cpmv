@@ -89,7 +89,7 @@ class ConvNeXtUNetPP512(nn.Module):
         self,
         in_channels: int = 3,
         num_classes: int = 1,
-        backbone: str = "convnext_base",
+        backbone: str = "timm/convnext_base.fb_in1k",
         decoder_channels: Tuple[int, int, int, int] = (128, 192, 256, 320),
         cls_dropout: float = 0.2,
         use_self_corr: bool = True,
