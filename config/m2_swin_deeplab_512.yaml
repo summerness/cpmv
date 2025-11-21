@@ -9,14 +9,18 @@ data:
   num_workers: 6
   fold_col: fold
   fold_id: 1
-  use_synthetic: true
-  synthetic_prob: 0.2
+  exclude_sources: ["supplemental"]
+  use_synthetic: false
+  synthetic_prob: 0.0
+  synthetic_copies: 0
 
 model:
   target: models.swin_deeplab_512.SwinDeepLab512
   params:
     in_channels: 3
     num_classes: 1
+    use_self_corr: true
+    self_corr_window: 7
 
 augmentations:
   train:
@@ -42,13 +46,29 @@ augmentations:
 
 train:
   epochs: 25
-  batch_size: 8
-  val_batch_size: 4
-  lr: 0.0001
-  weight_decay: 0.0001
+  batch_size: 16
+  val_batch_size: 8
+  lr: 5.0e-5
+  weight_decay: 0.0003
   min_lr: 1.0e-6
   output_dir: outputs/m2_swin_deeplab_512
   use_amp: true
   cls_weight: 0.3
   scheduler:
     name: cosine
+  log_train_f1: true
+  train_f1_batches: 32
+  early_stopping_patience: 5
+  save_val_visual:
+    num_samples: 6
+  eval_sweep:
+    thresholds: [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
+    areas: [0, 5, 10, 20, 50]
+  seg_loss:
+    name: tversky
+    alpha: 0.7
+    beta: 0.3
+  sim_loss:
+    weight: 0.04
+    topk: 8
+    patch: 7

@@ -7,9 +7,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from augmentations import synthetic_copy_move
-
-
 def _read_mask(mask_path) -> np.ndarray:
     """支持单个路径或 'path1|path2' 形式的多路径，返回合并后的二值 mask."""
 
@@ -55,6 +52,157 @@ def _read_mask(mask_path) -> np.ndarray:
             m = cv2.resize(m, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_NEAREST)
         mask = np.maximum(mask, m)
     return mask
+
+
+def is_foreground(patch: np.ndarray, var_th: float = 8.0, lap_th: float = 6.0) -> bool:
+    """判断 patch 是否有足够纹理/亮度方差，避免纯背景。"""
+    if patch is None or patch.size == 0:
+        return False
+    gray = patch
+    if gray.ndim == 3:
+        gray = cv2.cvtColor(gray, cv2.COLOR_RGB2GRAY)
+    gray = gray.astype(np.float32)
+    var = float(gray.var())
+    lap = cv2.Laplacian(gray, cv2.CV_32F)
+    lap_var = float(lap.var())
+    return var > var_th and lap_var > lap_th
+
+
+def generate_irregular_mask(h: int, w: int) -> np.ndarray:
+    """生成不规则的源 mask，面积占比约 1%-10%。"""
+    mask = np.zeros((h, w), dtype=np.uint8)
+    area = h * w
+    target_area = random.uniform(0.01, 0.1) * area
+    max_radius = int(np.sqrt(target_area / np.pi))
+    cx = random.randint(max_radius, max(w - max_radius, max_radius))
+    cy = random.randint(max_radius, max(h - max_radius, max_radius))
+    rx = random.randint(int(0.5 * max_radius), int(1.2 * max_radius))
+    ry = random.randint(int(0.5 * max_radius), int(1.2 * max_radius))
+    angle = random.randint(0, 179)
+    cv2.ellipse(mask, (cx, cy), (rx, ry), angle, 0, 360, 1, -1)
+    # 形态扰动
+    for _ in range(random.randint(1, 3)):
+        k = random.randint(3, 7)
+        if random.random() < 0.5:
+            mask = cv2.dilate(mask, np.ones((k, k), np.uint8), iterations=1)
+        else:
+            mask = cv2.erode(mask, np.ones((k, k), np.uint8), iterations=1)
+    if random.random() < 0.3:
+        mask = cv2.GaussianBlur(mask.astype(np.float32), (3, 3), 0)
+        mask = (mask > 0.5).astype(np.uint8)
+    return mask
+
+
+def _bbox_from_mask(mask: np.ndarray):
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+    return xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
+
+
+def sample_source_patch(image: np.ndarray, max_tries: int = 100):
+    h, w = image.shape[:2]
+    for _ in range(max_tries):
+        mask_src = generate_irregular_mask(h, w)
+        bbox = _bbox_from_mask(mask_src)
+        if bbox is None:
+            continue
+        x0, y0, x1, y1 = bbox
+        src_patch = image[y0:y1, x0:x1]
+        src_mask = mask_src[y0:y1, x0:x1]
+        if is_foreground(src_patch):
+            return src_patch, src_mask, (x0, y0, x1, y1)
+    return None, None, None
+
+
+def augment_patch_affine(patch: np.ndarray, mask: np.ndarray):
+    h, w = mask.shape
+    angle = random.uniform(-12, 12)
+    scale = random.uniform(0.95, 1.1)
+    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+    patch_affine = cv2.warpAffine(patch, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+    mask_affine = cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    if mask_affine.sum() < 0.3 * mask.sum():
+        return patch, mask  # 变换过小则回退
+    return patch_affine, mask_affine
+
+
+def adjust_patch_to_background(patch: np.ndarray, bg: np.ndarray) -> np.ndarray:
+    patch = patch.astype(np.float32)
+    bg = bg.astype(np.float32)
+    mean_p, std_p = patch.mean(axis=(0, 1)), patch.std(axis=(0, 1)) + 1e-6
+    mean_b, std_b = bg.mean(axis=(0, 1)), bg.std(axis=(0, 1)) + 1e-6
+    norm = (patch - mean_p) / std_p
+    matched = norm * std_b + mean_b
+    # 轻微亮度/噪声扰动
+    matched = matched * (1 + random.uniform(-0.05, 0.05))
+    gamma = random.uniform(0.9, 1.1)
+    matched = np.clip(255.0 * ((matched / 255.0) ** gamma), 0, 255)
+    if random.random() < 0.3:
+        noise_std = random.uniform(2.0, 5.0)
+        matched = matched + np.random.normal(0, noise_std, matched.shape)
+    return np.clip(matched, 0, 255).astype(np.uint8)
+
+
+def sample_target_location(image: np.ndarray, patch_mask: np.ndarray, src_bbox, max_tries: int = 20):
+    H, W = image.shape[:2]
+    ph, pw = patch_mask.shape
+    sx0, sy0, sx1, sy1 = src_bbox
+    src_cx, src_cy = (sx0 + sx1) / 2.0, (sy0 + sy1) / 2.0
+    for _ in range(max_tries):
+        tx = random.randint(0, max(0, W - pw))
+        ty = random.randint(0, max(0, H - ph))
+        cx, cy = tx + pw / 2.0, ty + ph / 2.0
+        # 避免过近
+        if abs(cx - src_cx) + abs(cy - src_cy) < 0.1 * (W + H):
+            continue
+        tgt_region = image[ty : ty + ph, tx : tx + pw]
+        if is_foreground(tgt_region):
+            return tx, ty
+    return None, None
+
+
+def blend_patch_to_image(image: np.ndarray, patch: np.ndarray, mask: np.ndarray, tx: int, ty: int):
+    H, W = image.shape[:2]
+    ph, pw = mask.shape
+    forged = image.copy()
+    forged_mask = np.zeros((H, W), dtype=np.uint8)
+    # soft alpha
+    alpha = cv2.GaussianBlur(mask.astype(np.float32), (7, 7), 0)
+    alpha = np.clip(alpha, 0, 1)[..., None]
+    dst = forged[ty : ty + ph, tx : tx + pw]
+    blended = patch.astype(np.float32) * alpha + dst.astype(np.float32) * (1 - alpha)
+    forged[ty : ty + ph, tx : tx + pw] = blended.astype(np.uint8)
+    forged_mask[ty : ty + ph, tx : tx + pw] = mask
+    return forged, forged_mask
+
+
+def synthetic_forgery(image: np.ndarray, base_mask: Optional[np.ndarray], p: float) -> tuple[np.ndarray, np.ndarray]:
+    """生成单次 copy-move 伪造。"""
+    if random.random() > p:
+        return image, base_mask
+    h, w = image.shape[:2]
+    src_patch, src_mask, bbox = sample_source_patch(image)
+    if src_patch is None:
+        return image, base_mask
+    src_patch, src_mask = augment_patch_affine(src_patch, src_mask)
+    sx0, sy0, sx1, sy1 = bbox
+    ph, pw = src_mask.shape
+    # 选择目标位置
+    tx, ty = sample_target_location(image, src_mask, bbox)
+    if tx is None:
+        return image, base_mask
+    # 颜色匹配
+    tgt_region = image[ty : ty + ph, tx : tx + pw]
+    src_patch = adjust_patch_to_background(src_patch, tgt_region)
+    forged, forged_mask = blend_patch_to_image(image, src_patch, src_mask, tx, ty)
+    # 合并 mask
+    if base_mask is None:
+        base_mask = np.zeros((h, w), dtype=np.uint8)
+    if base_mask.shape != forged_mask.shape:
+        base_mask = cv2.resize(base_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+    final_mask = np.clip(base_mask + forged_mask, 0, 1).astype(np.uint8)
+    return forged, final_mask
 
 
 class CopyMoveDataset(Dataset):
@@ -139,22 +287,24 @@ class CopyMoveDataset(Dataset):
 
         forged_ratio = float(mask.mean()) if mask is not None and mask.size else 0.0
 
-        if is_syn_dup:
-            if forged_ratio < 0.01:
-                if mask is None:
-                    mask = np.zeros(image.shape[:2], dtype=np.float32)
-                for _ in range(self.synthetic_times):
-                    image, mask = synthetic_copy_move(image, mask, p=1.0)
+        # 合成伪造：可以作用于合成副本或原始样本（取决于配置）
+        def apply_synthetic(img, msk) -> tuple[np.ndarray, np.ndarray]:
+            forged_img, forged_m = img, msk
+            for _ in range(self.synthetic_times):
+                forged_img, forged_m = synthetic_forgery(
+                    forged_img,
+                    forged_m if forged_m is not None else np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8),
+                    p=self.synthetic_prob if self.use_synthetic else 0.0,
+                )
+            return forged_img, forged_m
 
+        if is_syn_dup:
+            # 仅使用 authentic 池复制出的样本：无论是否已有 mask，都按概率伪造
+            image, mask = apply_synthetic(image, mask)
         elif self.use_synthetic and self.synthetic_on_base:
+            # 原始样本也可以按概率注入伪造（仅在 forged_ratio 很低时）
             if forged_ratio < 0.01:
-                for _ in range(self.synthetic_times):
-                    if random.random() < self.synthetic_prob:
-                        image, mask = synthetic_copy_move(
-                            image,
-                            mask if mask is not None else np.zeros((image.shape[0], image.shape[1]), dtype=np.float32),
-                            p=1.0,
-                        )
+                image, mask = apply_synthetic(image, mask)
 
         data = {"image": image}
         if mask is not None:
