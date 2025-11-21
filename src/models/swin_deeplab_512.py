@@ -77,6 +77,7 @@ class SwinDeepLab512(nn.Module):
             in_chans=in_channels,
             features_only=True,
             out_indices=(0, 1, 2, 3),
+            img_size=512,
         )
         channels = self.encoder.feature_info.channels()
         self.aspp = ASPP(channels[-1], out_channels=256)

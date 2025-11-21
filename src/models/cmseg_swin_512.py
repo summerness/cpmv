@@ -41,6 +41,7 @@ class CMSegSwin512(nn.Module):
             in_chans=in_channels,
             features_only=True,
             out_indices=(1, 2, 3),
+            img_size=512,
         )
         channels = self.encoder.feature_info.channels()
         self.proj8 = nn.Conv2d(channels[0], 192, kernel_size=1, bias=False)
