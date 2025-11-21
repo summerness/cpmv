@@ -343,6 +343,9 @@ def run_training(cfg: Dict) -> None:
                         _mask_logits = mask_logits.unsqueeze(1)
                     else:
                         _mask_logits = mask_logits
+                    # 对齐分辨率
+                    if _mask_logits.shape[-2:] != feat_for_sim.shape[-2:]:
+                        _mask_logits = F.interpolate(_mask_logits, size=feat_for_sim.shape[-2:], mode="bilinear", align_corners=False)
                     sim_loss = sim_loss_fn(feat_for_sim, _mask_logits)
                     seg_loss = seg_loss + sim_loss_weight * sim_loss
                 cls_loss = F.cross_entropy(cls_logits_ce, cls_targets.long().view(-1))
