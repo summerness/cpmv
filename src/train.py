@@ -335,11 +335,13 @@ def run_training(cfg: Dict) -> None:
                     cls_logits_ce = cls_logits
                 seg_loss = seg_loss_fn(mask_logits, masks)
                 if sim_loss_fn is not None:
-                    feat_for_sim = corr_feat if corr_feat is not None else mask_logits
+                    # 仅对 corr_feat 做 detach，保留对 mask_logits 的梯度
+                    if corr_feat is not None:
+                        feat_for_sim = corr_feat.detach()
+                    else:
+                        feat_for_sim = mask_logits
                     if feat_for_sim.ndim == 3:  # [B,H,W]
                         feat_for_sim = feat_for_sim.unsqueeze(1)
-                    # 不回传梯度到特征，防止破坏自相关特征语义
-                    feat_for_sim = feat_for_sim.detach()
                     _mask_logits = mask_logits if mask_logits.ndim == 4 else mask_logits.unsqueeze(1)
                     sim_loss = sim_loss_fn(feat_for_sim, _mask_logits)
                     seg_loss = seg_loss + sim_loss_weight * sim_loss
