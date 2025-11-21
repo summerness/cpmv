@@ -72,35 +72,55 @@ class SegmentationLoss(nn.Module):
 
 class SimilarityConsistencyLoss(nn.Module):
     """
-    Encourages high-similarity feature pairs to have consistent mask predictions.
+    Copy-Move Consistency Loss: 强制相似 patch 的 mask 预测一致（局部窗口内）。
+    feats: [B,C,H,W] (如自相关或 decoder 特征)
+    mask_logits: [B,1,H,W] 或其他分辨率（自动对齐）
     """
 
-    def __init__(self, topk: int = 8) -> None:
+    def __init__(self, topk: int = 8, patch: int = 7) -> None:
         super().__init__()
         self.topk = topk
+        self.patch = patch
 
-    def forward(self, feats: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
-        """
-        feats: [B, C, H, W] feature map
-        logits: [B, 1, H, W] mask logits
-        """
+    def forward(self, feats: torch.Tensor, mask_logits: torch.Tensor) -> torch.Tensor:
         b, c, h, w = feats.shape
-        # 若 logits 分辨率不同，先对齐到 feats 分辨率
-        if logits.shape[-2:] != (h, w):
-            logits = F.interpolate(logits, size=(h, w), mode="bilinear", align_corners=False)
-        n = h * w
-        feat_flat = feats.view(b, c, n)
-        feat_norm = F.normalize(feat_flat, dim=1)  # [B, C, N]
-        sim = torch.bmm(feat_norm.transpose(1, 2), feat_norm)  # [B, N, N]
-        k = min(self.topk, n)
-        _, idx = torch.topk(sim, k=k, dim=-1)
-        prob = torch.sigmoid(logits)
-        prob_flat = prob.view(b, 1, n)  # [B,1,N]
-        prob_expand = prob_flat.expand(-1, n, -1)  # [B,N,N]
-        gathered = torch.gather(prob_expand, 2, idx)  # [B, N, k]
-        anchor = prob_flat.transpose(1, 2)  # [B,N,1]
-        anchor = anchor.expand(-1, -1, k)
-        loss = (anchor - gathered).abs().mean()
+        # 对齐 mask 分辨率
+        if mask_logits.shape[-2:] != (h, w):
+            mask = F.interpolate(mask_logits, size=(h, w), mode="bilinear", align_corners=False)
+        else:
+            mask = mask_logits
+
+        # 1) 归一化特征
+        f = F.normalize(feats, dim=1)
+
+        # 2) unfold 成局部 patch
+        unfold = nn.Unfold(kernel_size=self.patch, padding=self.patch // 2)
+        patches = unfold(f)  # [B, C*K*K, H*W]
+        patches = patches.view(b, c, self.patch * self.patch, h, w)  # [B,C,K,H,W]
+
+        # 3) 中心特征
+        center = f.unsqueeze(2)  # [B,C,1,H,W]
+
+        # 4) 局部 cos 相似度
+        sim = F.cosine_similarity(center, patches, dim=1)  # [B,K,H,W]
+
+        # 5) top-k 最相似邻域
+        k = min(self.topk, sim.size(1))
+        sim_vals, idx = torch.topk(sim, k=k, dim=1)  # idx: [B,k,H,W]
+
+        # 6) gather 邻域 mask
+        mask_prob = torch.sigmoid(mask)  # [B,1,H,W]
+        mask_neighbors = mask_prob  # [B,1,H,W]
+        # 展开便于 gather：先展开为 [B,1,H,W] -> [B,1,1,H,W] 再扩展
+        mask_neighbors = mask_prob.unsqueeze(2).expand(-1, 1, k, -1, -1)  # [B,1,k,H,W]
+        mask_center = mask_prob.unsqueeze(2)  # [B,1,1,H,W]
+
+        # 7) 特征相似度权重
+        w = F.softmax(sim_vals, dim=1).unsqueeze(1)  # [B,1,k,H,W]
+
+        # 8) 预测一致性
+        diff = (mask_center - mask_neighbors).abs()
+        loss = (w * diff).mean()
         return loss
 
 
