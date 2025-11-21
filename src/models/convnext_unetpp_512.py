@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import safe_timm_create
-from self_correlation import SelfCorrelationBlock
+from models.utils import safe_timm_create
+from models.self_correlation import SelfCorrelationBlock
 
 
 class ConvBlock(nn.Module):
